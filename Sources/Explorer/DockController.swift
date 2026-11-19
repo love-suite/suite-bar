@@ -10,6 +10,7 @@ final class DockController {
 
     private var panel: DockPanel?
     private let hider = DockController.makeHider()
+    private let agent = DockController.makeAgent()
     private let fitter = WindowFitter()
     private var observers: [NSObjectProtocol] = []
 
@@ -47,12 +48,18 @@ final class DockController {
         panel?.orderOut(nil)
         setWatchingPointer(false)
         fitter.reserved = 0
-        hider.restore()
+        Self.restore(hider: hider, agent: agent)
     }
 
     /// For `--restore-finder`, after a forced quit.
     static func restoreSystemDock() {
-        makeHider().restore()
+        restore(hider: makeHider(), agent: makeAgent())
+    }
+
+    /// Its settings first, so that a stopped Dock starts again as the user had it.
+    private static func restore(hider: SystemDockHider, agent: SystemDockAgent) {
+        hider.restore()
+        agent.start()
     }
 
     private func apply() {
@@ -66,13 +73,15 @@ final class DockController {
             panel?.dockView.geometry = options.geometry
             setAutohides(options.autohides)
             place()
+            // Hidden either way, should it be started again by something else (a log out, say).
             hider.hide()
+            if options.stopsSystemDock { agent.stop() } else { agent.start() }
         } else {
             setAutohides(false)
             setWatchingPointer(false)
             panel?.orderOut(nil)
             fitter.reserved = 0
-            hider.restore()
+            Self.restore(hider: hider, agent: agent)
         }
         // The screen's visible area and the system Dock's size follow once it has restarted.
         for delay in [1.0, 3.0] {
@@ -134,6 +143,8 @@ final class DockController {
     /// Dock wakes up and shows its icons' names. The pointer is put back a few points higher, too little to
     /// be noticed; a screen below the main one is still reached.
     private func keepOffBottomEdge(_ point: NSPoint, screen: NSScreen) {
+        // A stopped Dock can't wake up: the whole edge is free.
+        guard !agent.isStopped else { return }
         let others = NSScreen.screens.dropFirst().map(\.frame)
         let span = systemDockSpan ?? screen.frame.minX...screen.frame.maxX
         guard let target = BottomEdge.guarded(point, screen: screen.frame, span: span, others: others)
@@ -228,6 +239,25 @@ final class DockController {
         }, completionHandler: { [weak self] in
             if self?.isRevealed == false { panel.orderOut(nil) }
         })
+    }
+
+    private static func makeAgent() -> SystemDockAgent {
+        SystemDockAgent(
+            isDockRunning: {
+                !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").isEmpty
+            },
+            launchctl: { arguments in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                process.arguments = arguments
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    return process.terminationStatus
+                } catch {
+                    return -1
+                }
+            })
     }
 
     private static func makeHider() -> SystemDockHider {

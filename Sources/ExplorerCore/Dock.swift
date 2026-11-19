@@ -256,10 +256,13 @@ public struct DockOptions: Codable, Equatable {
     public var iconSize: CGFloat = 48
     /// Slides away until the pointer reaches the bottom of the screen, as the system Dock can.
     public var autohides = false
+    /// Experimental: the system Dock stopped altogether (⌘Tab, Mission Control, Spaces and full screen
+    /// stop with it), rather than hidden.
+    public var stopsSystemDock = false
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case isShown, iconSize, autohides }
+    private enum CodingKeys: String, CodingKey { case isShown, iconSize, autohides, stopsSystemDock }
 
     /// Options saved by an older version, without the newer keys, keep what they had.
     public init(from decoder: Decoder) throws {
@@ -267,6 +270,7 @@ public struct DockOptions: Codable, Equatable {
         isShown = try values.decodeIfPresent(Bool.self, forKey: .isShown) ?? false
         iconSize = try values.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48
         autohides = try values.decodeIfPresent(Bool.self, forKey: .autohides) ?? false
+        stopsSystemDock = try values.decodeIfPresent(Bool.self, forKey: .stopsSystemDock) ?? false
     }
 
     public var geometry: DockGeometry { DockGeometry(iconSize: iconSize) }
@@ -458,5 +462,51 @@ public final class SystemDockHider {
         }
         memory.removeObject(forKey: Self.savedKey)
         restartDock()
+    }
+}
+
+// MARK: Stopping the system Dock (experimental)
+
+/// Stops and restarts the system Dock's launchd job for this login session only (`launchctl bootout`,
+/// then `bootstrap` and `kickstart`): nothing is written to the system, and logging out brings it back
+/// anyway. Remembered in our preferences, so a crash can be undone at the next launch.
+public final class SystemDockAgent {
+    public static let label = "com.apple.Dock.agent"
+    public static let plist = "/System/Library/LaunchAgents/com.apple.Dock.plist"
+    private static let stoppedKey = "SystemDockStopped"
+
+    private let domain: String
+    private let memory: UserDefaults
+    private let isDockRunning: () -> Bool
+    /// Runs `launchctl` with these arguments and returns its exit status.
+    private let launchctl: ([String]) -> Int32
+
+    public init(uid: uid_t = getuid(), memory: UserDefaults = .standard,
+                isDockRunning: @escaping () -> Bool, launchctl: @escaping ([String]) -> Int32) {
+        domain = "gui/\(uid)"
+        self.memory = memory
+        self.isDockRunning = isDockRunning
+        self.launchctl = launchctl
+    }
+
+    /// True once we have stopped the Dock, until we start it again.
+    public var isStopped: Bool { memory.bool(forKey: Self.stoppedKey) }
+
+    /// Stops the Dock if it runs (after a log out it runs again, even if we had stopped it).
+    public func stop() {
+        if isDockRunning() {
+            guard launchctl(["bootout", "\(domain)/\(Self.label)"]) == 0 else { return }
+        }
+        memory.set(true, forKey: Self.stoppedKey)
+    }
+
+    /// Starts the Dock again if we stopped it: loading the job doesn't start it, so it is kicked too.
+    public func start() {
+        guard isStopped else { return }
+        if !isDockRunning() {
+            _ = launchctl(["bootstrap", domain, Self.plist])
+            _ = launchctl(["kickstart", "\(domain)/\(Self.label)"])
+        }
+        memory.removeObject(forKey: Self.stoppedKey)
     }
 }

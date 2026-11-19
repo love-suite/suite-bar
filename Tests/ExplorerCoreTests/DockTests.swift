@@ -448,3 +448,68 @@ private final class FakeDock: PreferenceDomain {
         #expect(restarts == 0)
     }
 }
+
+/// launchctl is never run by tests: the commands are only recorded.
+@Suite struct SystemDockAgentTests {
+    final class Fake {
+        var running = true
+        var commands: [[String]] = []
+        var status: Int32 = 0
+    }
+
+    func agent(_ fake: Fake, memory: UserDefaults) -> SystemDockAgent {
+        SystemDockAgent(uid: 501, memory: memory, isDockRunning: { fake.running }, launchctl: { arguments in
+            fake.commands.append(arguments)
+            if fake.status == 0 { fake.running = arguments[0] != "bootout" ? true : false }
+            return fake.status
+        })
+    }
+
+    @Test func stoppingBootsTheJobOutForThisSession() {
+        let fake = Fake()
+        let dock = agent(fake, memory: freshDefaults())
+        dock.stop()
+        #expect(fake.commands == [["bootout", "gui/501/com.apple.Dock.agent"]])
+        #expect(dock.isStopped)
+        #expect(!fake.running)
+    }
+
+    @Test func startingLoadsAndKicksTheJob() {
+        let fake = Fake()
+        let dock = agent(fake, memory: freshDefaults())
+        dock.stop()
+        dock.start()
+        #expect(fake.commands.dropFirst().map { $0 } == [
+            ["bootstrap", "gui/501", "/System/Library/LaunchAgents/com.apple.Dock.plist"],
+            ["kickstart", "gui/501/com.apple.Dock.agent"],
+        ])
+        #expect(!dock.isStopped)
+        #expect(fake.running)
+    }
+
+    @Test func aDockWeDidntStopIsLeftAlone() {
+        let fake = Fake()
+        agent(fake, memory: freshDefaults()).start()
+        #expect(fake.commands.isEmpty)
+    }
+
+    @Test func aRefusedStopIsntRemembered() {
+        let fake = Fake()
+        fake.status = 150
+        let dock = agent(fake, memory: freshDefaults())
+        dock.stop()
+        #expect(!dock.isStopped)
+    }
+
+    @Test func afterALogOutTheDockIsStoppedAgain() {
+        let fake = Fake()
+        let memory = freshDefaults()
+        agent(fake, memory: memory).stop()
+        fake.running = true
+        agent(fake, memory: memory).stop()
+        #expect(fake.commands.count == 2)
+        // Already stopped (crash, then a new launch): nothing to do.
+        agent(fake, memory: memory).stop()
+        #expect(fake.commands.count == 2)
+    }
+}

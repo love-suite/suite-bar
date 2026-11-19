@@ -75,6 +75,12 @@ struct DockSettingsView: View {
                          + "Explorer's own windows don't.")
                 }
                 .disabled(options.autohides)
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Stop the system Dock (experimental)", isOn: dock(\.stopsSystemDock))
+                    DockNote("Rather than hiding it: the whole bottom edge is free, but ⌘Tab, Mission Control, "
+                             + "Spaces and full screen stop with it. It starts again when you turn this off, go "
+                             + "back to the System Dock, switch to Finder, quit Explorer or log out.")
+                }
             }
             .disabled(!options.isShown)
         }
