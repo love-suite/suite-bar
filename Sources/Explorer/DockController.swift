@@ -75,6 +75,7 @@ final class DockController {
             panel?.dockView.geometry = options.geometry
             setAutohides(options.autohides)
             place()
+            MinimizedWindows.shared.isEnabled = true
             // Hidden either way, should it be started again by something else (a log out, say).
             hider.hide()
             if options.stopsSystemDock { agent.stop() } else { agent.start() }
@@ -83,6 +84,7 @@ final class DockController {
         } else {
             setAutohides(false)
             setWatchingPointer(false)
+            MinimizedWindows.shared.isEnabled = false
             panel?.orderOut(nil)
             fitter.reserved = 0
             AppSwitcher.shared.isEnabled = false

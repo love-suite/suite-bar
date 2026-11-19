@@ -62,7 +62,7 @@ struct DockSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
-                        Text("Keep other apps' windows above the Dock")
+                        Text("Other apps' windows")
                         Spacer()
                         if WindowFitter.isPermitted {
                             Label("Allowed", systemImage: "checkmark.circle.fill")
@@ -71,10 +71,9 @@ struct DockSettingsView: View {
                             Button("Allow…") { WindowFitter.askForPermission() }
                         }
                     }
-                    DockNote("Needs the Accessibility permission (Privacy & Security › Accessibility). "
-                         + "Explorer's own windows don't.")
+                    DockNote("To keep them above the Dock and show the minimized ones in it, Explorer needs the "
+                             + "Accessibility permission (Privacy & Security › Accessibility).")
                 }
-                .disabled(options.autohides)
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Stop the system Dock (experimental)", isOn: dock(\.stopsSystemDock))
                     DockNote("Rather than hiding it, so the whole bottom edge is free. Explorer then does ⌘Tab "

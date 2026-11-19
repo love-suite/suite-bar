@@ -161,6 +161,20 @@ public final class DockStore {
     }
 }
 
+/// A minimized window, shown in the Dock until it is brought back.
+public struct DockWindow: Hashable {
+    /// Ours, given when the window is first seen minimized.
+    public let id: Int
+    public var title: String
+    public var app: DockApp
+
+    public init(id: Int, title: String, app: DockApp) {
+        self.id = id
+        self.title = title
+        self.app = app
+    }
+}
+
 /// One place in the Dock, left to right.
 public enum DockTile: Hashable {
     /// Explorer, always first, where the system Dock has Finder.
@@ -168,6 +182,7 @@ public enum DockTile: Hashable {
     case app(DockApp, isPinned: Bool, isRunning: Bool)
     case separator
     case downloads
+    case window(DockWindow)
     case trash
 
     public var app: DockApp? {
@@ -178,8 +193,8 @@ public enum DockTile: Hashable {
 
 public enum DockLayout {
     /// Explorer, the pinned apps, a separator and the running apps that aren't pinned, then a separator,
-    /// Downloads and the Trash. Finder never appears.
-    public static func tiles(pinned: [DockApp], running: [DockApp]) -> [DockTile] {
+    /// Downloads, the minimized windows and the Trash. Finder never appears.
+    public static func tiles(pinned: [DockApp], running: [DockApp], minimized: [DockWindow] = []) -> [DockTile] {
         let pinned = DockPins(pinned.filter { !DockStore.isExcluded($0) }).apps
         let others = DockPins(running.filter { app in
             !DockStore.isExcluded(app) && !pinned.contains { $0.isSameApp(as: app) }
@@ -192,7 +207,9 @@ public enum DockLayout {
             tiles.append(.separator)
             tiles += others.map { .app($0, isPinned: false, isRunning: true) }
         }
-        tiles += [.separator, .downloads, .trash]
+        tiles += [.separator, .downloads]
+        tiles += minimized.map { .window($0) }
+        tiles.append(.trash)
         return tiles
     }
 }

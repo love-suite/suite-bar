@@ -210,6 +210,12 @@ private func freshDefaults() -> UserDefaults {
         #expect(tiles == [.explorer, .app(mail, isPinned: true, isRunning: true), .separator, .downloads, .trash])
     }
 
+    @Test func minimizedWindowsComeBeforeTheTrash() {
+        let window = DockWindow(id: 1, title: "Inbox", app: mail)
+        let tiles = DockLayout.tiles(pinned: [mail], running: [mail], minimized: [window])
+        #expect(Array(tiles.suffix(3)) == [.downloads, .window(window), .trash])
+    }
+
     @Test func finderNeverShowsEvenIfPinned() {
         let tiles = DockLayout.tiles(pinned: [finder, mail], running: [])
         #expect(!tiles.contains { $0.app?.bundleID == "com.apple.finder" })

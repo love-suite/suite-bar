@@ -49,8 +49,10 @@ final class DockView: NSView {
                 self?.reload()
             })
         }
-        observers.append(NotificationCenter.default.addObserver(forName: DockStore.didChange, object: nil,
-                                                                queue: .main) { [weak self] _ in self?.reload() })
+        for name in [DockStore.didChange, MinimizedWindows.didChange] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil,
+                                                                    queue: .main) { [weak self] _ in self?.reload() })
+        }
         for folder in [Self.downloads, TrashFolder.url] {
             let watcher = DirectoryWatcher(url: folder) { [weak self] in
                 DispatchQueue.main.async { self?.refreshFolders() }
@@ -82,7 +84,8 @@ final class DockView: NSView {
             running[key(dockApp)] = app
         }
         let old = barSize
-        tiles = DockLayout.tiles(pinned: store.pins.apps, running: runningApps)
+        tiles = DockLayout.tiles(pinned: store.pins.apps, running: runningApps,
+                                 minimized: MinimizedWindows.shared.windows)
         needsDisplay = true
         if barSize != old { onSizeChange?() }
     }
@@ -120,10 +123,36 @@ final class DockView: NSView {
             return image
         case .downloads:
             return downloadsIcon
+        case .window(let window):
+            let appIcon = icon(for: .app(window.app, isPinned: false, isRunning: true))
+            return Self.minimizedIcon(badge: appIcon)
         case .trash:
             return NSImage(named: trashIsFull ? NSImage.trashFullName : NSImage.trashEmptyName)
         case .separator:
             return nil
+        }
+    }
+
+    /// A minimized window: a small window with its app's icon in the corner, as the system Dock shows one
+    /// (its picture would need the Screen Recording permission).
+    static func minimizedIcon(badge: NSImage?) -> NSImage {
+        NSImage(size: NSSize(width: 64, height: 64), flipped: false) { rect in
+            let window = NSRect(x: 4, y: 12, width: 56, height: 44)
+            let shape = NSBezierPath(roundedRect: window, xRadius: 6, yRadius: 6)
+            NSColor.windowBackgroundColor.setFill()
+            shape.fill()
+            NSColor.separatorColor.setStroke()
+            shape.lineWidth = 1
+            shape.stroke()
+            NSColor.tertiaryLabelColor.setFill()
+            NSRect(x: window.minX, y: window.maxY - 9, width: window.width, height: 9).fill()
+            for (index, color) in [NSColor.systemRed, .systemYellow, .systemGreen].enumerated() {
+                color.setFill()
+                NSBezierPath(ovalIn: NSRect(x: window.minX + 5 + CGFloat(index) * 8, y: window.maxY - 7,
+                                            width: 5, height: 5)).fill()
+            }
+            badge?.draw(in: NSRect(x: rect.maxX - 34, y: 0, width: 34, height: 34))
+            return true
         }
     }
 
@@ -132,6 +161,7 @@ final class DockView: NSView {
         case .explorer: return "Explorer"
         case .app(let app, _, _): return running[key(app)]?.localizedName ?? app.name
         case .downloads: return "Downloads"
+        case .window(let window): return window.title
         case .trash: return "Trash"
         case .separator: return ""
         }
@@ -309,6 +339,8 @@ final class DockView: NSView {
             }
         case .downloads:
             showStack(at: index)
+        case .window(let window):
+            MinimizedWindows.shared.restore(window.id)
         case .trash:
             ExplorerWindowController.open(TrashFolder.url)
         case .separator:
@@ -374,6 +406,12 @@ final class DockView: NSView {
             }
         case .downloads?:
             add("Open in Explorer") { ExplorerWindowController.open(Self.downloads) }
+        case .window(let window)?:
+            add("Bring Back") { MinimizedWindows.shared.restore(window.id) }
+            if let app = MinimizedWindows.shared.app(of: window.id) {
+                menu.addItem(.separator())
+                add("Quit \(app.localizedName ?? window.app.name)") { app.terminate() }
+            }
         case .trash?:
             add("Open") { ExplorerWindowController.open(TrashFolder.url) }
             menu.addItem(.separator())
@@ -447,7 +485,7 @@ final class DockView: NSView {
             _ = FileDrop.perform(sender, into: Self.downloads)
         case .trash:
             FileActions.moveToTrash(urls)
-        case .separator:
+        case .separator, .window:
             return false
         }
         return true
@@ -472,7 +510,7 @@ final class DockView: NSView {
             if urls.contains(where: { TrashFolder.contains($0) }) { return (nil, []) }
             let mask = info.draggingSourceOperationMask
             return (index, mask.contains(.delete) ? .delete : mask.contains(.move) ? .move : .generic)
-        case .separator:
+        case .separator, .window:
             return (nil, [])
         }
     }
