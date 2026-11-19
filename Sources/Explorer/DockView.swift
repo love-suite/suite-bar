@@ -13,6 +13,9 @@ final class DockView: NSView {
     var barSize: NSSize { geometry.barSize(for: tiles) }
 
     private(set) var tiles: [DockTile] = []
+    /// A stack is open, an icon is being dragged or a drop is on its way: the Dock mustn't slide away.
+    var isBusy: Bool { stack != nil || pressed != nil || reorder != nil || dropTarget != nil || isDropping }
+    private var isDropping = false
     private var running: [String: NSRunningApplication] = [:]
     private var icons: [String: NSImage] = [:]
     private var downloadsIcon: NSImage?
@@ -388,6 +391,7 @@ final class DockView: NSView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         acceptsDrop = [:]
+        isDropping = true
         return draggingUpdated(sender)
     }
 
@@ -403,12 +407,20 @@ final class DockView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        isDropping = false
+        dropTarget = nil
+        needsDisplay = true
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        isDropping = false
         dropTarget = nil
         needsDisplay = true
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         defer {
+            isDropping = false
             dropTarget = nil
             needsDisplay = true
         }

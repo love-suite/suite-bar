@@ -251,15 +251,53 @@ public struct DockGeometry: Equatable {
 
 /// The Dock's options, saved by the app.
 public struct DockOptions: Codable, Equatable {
-    /// Explorer's Dock at the bottom of the main screen.
+    /// Explorer's Dock in place of the system one, which is then hidden (with Finder's icon in it).
     public var isShown = false
     public var iconSize: CGFloat = 48
-    /// The system Dock hidden while ours is shown, so Finder's icon is out of sight.
-    public var hidesSystemDock = true
+    /// Slides away until the pointer reaches the bottom of the screen, as the system Dock can.
+    public var autohides = false
 
     public init() {}
 
+    private enum CodingKeys: String, CodingKey { case isShown, iconSize, autohides }
+
+    /// Options saved by an older version, without the newer keys, keep what they had.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        isShown = try values.decodeIfPresent(Bool.self, forKey: .isShown) ?? false
+        iconSize = try values.decodeIfPresent(CGFloat.self, forKey: .iconSize) ?? 48
+        autohides = try values.decodeIfPresent(Bool.self, forKey: .autohides) ?? false
+    }
+
     public var geometry: DockGeometry { DockGeometry(iconSize: iconSize) }
+}
+
+/// Keeps windows clear of the Dock, as macOS does for its own Dock: a window reaching into the Dock's
+/// strip at the bottom of the screen is shortened to end above it. Frames are in screen coordinates,
+/// origin bottom left.
+public enum WindowFit {
+    /// The frame `window` should take, or nil when it can stay as it is. `reserved` is the height kept
+    /// for the Dock above `screen`'s bottom; `visibleTop` the top of the usable area (below the menu bar).
+    /// With `onlyIfFilling`, only windows filling the height (maximized) change: a window the user moved
+    /// down on purpose stays put.
+    public static func fitted(_ window: CGRect, screen: CGRect, reserved: CGFloat, visibleTop: CGFloat,
+                              onlyIfFilling: Bool = false, minimumHeight: CGFloat = 120) -> CGRect? {
+        let limit = screen.minY + reserved
+        guard reserved > 0,
+              screen.contains(CGPoint(x: window.midX, y: min(max(window.midY, screen.minY), screen.maxY - 1))),
+              window.minY < limit - 0.5,
+              // A window pushed below the screen's edge was moved there by the user.
+              window.minY >= screen.minY - 1,
+              window.maxY - limit >= minimumHeight
+        else { return nil }
+        if onlyIfFilling, window.maxY < visibleTop - 2 { return nil }
+        return CGRect(x: window.minX, y: limit, width: window.width, height: window.maxY - limit)
+    }
+
+    /// Converts between Accessibility's coordinates (origin top left of the main screen) and AppKit's.
+    public static func flipped(_ rect: CGRect, mainScreenHeight: CGFloat) -> CGRect {
+        CGRect(x: rect.minX, y: mainScreenHeight - rect.maxY, width: rect.width, height: rect.height)
+    }
 }
 
 /// Orders a stack's items as the Dock does: the most recently added first.
@@ -312,14 +350,18 @@ public final class AppPreferenceDomain: PreferenceDomain {
     }
 }
 
-/// Hides the system Dock with public settings only: automatic hiding with a delay so long it never
-/// comes back, then a Dock restart. The values found before are kept in our own preferences, so they
-/// can be put back even after a crash.
+/// Hides the system Dock with public settings only: automatic hiding with a delay so long it doesn't come
+/// back, and an animation so slow that it wouldn't be seen if it did, then a Dock restart. The values
+/// found before are kept in our own preferences, so they can be put back even after a crash.
 public final class SystemDockHider {
-    public static let autohideKey = "autohide"
-    public static let delayKey = "autohide-delay"
-    /// Seconds before the hidden Dock would show: longer than anyone hovers.
-    public static let hiddenDelay: Double = 1000
+    /// What the Dock is set to while hidden.
+    public static let hiddenSettings: [(key: String, value: Any)] = [
+        ("autohide", true),
+        // Seconds before the hidden Dock would show: longer than anyone hovers.
+        ("autohide-delay", 1000.0),
+        // Seconds the sliding in would take, should the Dock still decide to show (pushing at the edge).
+        ("autohide-time-modifier", 1000.0),
+    ]
     private static let savedKey = "SystemDockSettingsBeforeHiding"
 
     private let dock: PreferenceDomain
@@ -337,29 +379,36 @@ public final class SystemDockHider {
     public var isHiding: Bool { memory.dictionary(forKey: Self.savedKey) != nil }
 
     private var isHiddenNow: Bool {
-        (dock.value(forKey: Self.autohideKey) as? Bool) == true
-            && (dock.value(forKey: Self.delayKey) as? NSNumber)?.doubleValue == Self.hiddenDelay
+        Self.hiddenSettings.allSatisfy { key, value in
+            (dock.value(forKey: key) as? NSObject)?.isEqual(value) == true
+        }
     }
 
     /// Hides the system Dock; does nothing (no restart) if it already is.
     public func hide() {
-        if !isHiding {
-            var saved: [String: Any] = [:]
-            for key in [Self.autohideKey, Self.delayKey] {
-                if let value = dock.value(forKey: key) { saved[key] = value }
-            }
-            memory.set(saved, forKey: Self.savedKey)
+        var saved = memory.dictionary(forKey: Self.savedKey) ?? [:]
+        var missing = !isHiding
+        // Each key saved is marked, so a key added by a later version is saved once, before it changes.
+        // The first version saved two keys without marks.
+        if isHiding, !saved.keys.contains(where: { $0.hasPrefix("~") }) {
+            saved["~autohide"] = true
+            saved["~autohide-delay"] = true
         }
+        for (key, _) in Self.hiddenSettings where saved["~" + key] == nil {
+            if let value = dock.value(forKey: key) { saved[key] = value }
+            saved["~" + key] = true
+            missing = true
+        }
+        if missing { memory.set(saved, forKey: Self.savedKey) }
         guard !isHiddenNow else { return }
-        dock.setValue(true, forKey: Self.autohideKey)
-        dock.setValue(Self.hiddenDelay, forKey: Self.delayKey)
+        for (key, value) in Self.hiddenSettings { dock.setValue(value, forKey: key) }
         restartDock()
     }
 
     /// Puts back the settings found before hiding; does nothing if we didn't hide it.
     public func restore() {
         guard let saved = memory.dictionary(forKey: Self.savedKey) else { return }
-        for key in [Self.autohideKey, Self.delayKey] {
+        for (key, _) in Self.hiddenSettings {
             dock.setValue(saved[key], forKey: key)
         }
         memory.removeObject(forKey: Self.savedKey)

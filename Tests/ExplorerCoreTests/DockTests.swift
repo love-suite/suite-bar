@@ -255,10 +255,61 @@ private func freshDefaults() -> UserDefaults {
     @Test func optionsAreSavedAsJSON() throws {
         var options = DockOptions()
         #expect(!options.isShown)
-        #expect(options.hidesSystemDock)
+        #expect(!options.autohides)
         options.iconSize = 64
+        options.autohides = true
         let decoded = try JSONDecoder().decode(DockOptions.self, from: JSONEncoder().encode(options))
         #expect(decoded == options)
+    }
+
+    @Test func optionsFromTheFirstVersionKeepTheDockShown() throws {
+        let old = Data(#"{"isShown":true,"iconSize":56,"hidesSystemDock":true}"#.utf8)
+        let options = try JSONDecoder().decode(DockOptions.self, from: old)
+        #expect(options.isShown)
+        #expect(options.iconSize == 56)
+        #expect(!options.autohides)
+    }
+}
+
+@Suite struct WindowFitTests {
+    // A 1512 × 982 screen, menu bar 33 high, Dock strip 70 high.
+    let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
+    let top: CGFloat = 949
+
+    @Test func aMaximizedWindowEndsAboveTheDock() {
+        let window = CGRect(x: 0, y: 4, width: 1512, height: 945)
+        #expect(WindowFit.fitted(window, screen: screen, reserved: 70, visibleTop: top)
+                == CGRect(x: 0, y: 70, width: 1512, height: 879))
+        #expect(WindowFit.fitted(window, screen: screen, reserved: 70, visibleTop: top, onlyIfFilling: true) != nil)
+    }
+
+    @Test func windowsClearOfTheDockStay() {
+        let window = CGRect(x: 100, y: 200, width: 800, height: 600)
+        #expect(WindowFit.fitted(window, screen: screen, reserved: 70, visibleTop: top) == nil)
+    }
+
+    @Test func aWindowLowerDownButNotFillingStaysWhenOnlyMaximizedOnesChange() {
+        let window = CGRect(x: 100, y: 20, width: 800, height: 600)
+        #expect(WindowFit.fitted(window, screen: screen, reserved: 70, visibleTop: top, onlyIfFilling: true) == nil)
+        #expect(WindowFit.fitted(window, screen: screen, reserved: 70, visibleTop: top)?.minY == 70)
+    }
+
+    @Test func windowsPushedOffTheScreenOrTooShortOrElsewhereStay() {
+        #expect(WindowFit.fitted(CGRect(x: 100, y: -200, width: 800, height: 600), screen: screen,
+                                 reserved: 70, visibleTop: top) == nil)
+        #expect(WindowFit.fitted(CGRect(x: 100, y: 10, width: 800, height: 150), screen: screen,
+                                 reserved: 70, visibleTop: top) == nil)
+        #expect(WindowFit.fitted(CGRect(x: 2000, y: 4, width: 800, height: 900), screen: screen,
+                                 reserved: 70, visibleTop: top) == nil)
+        #expect(WindowFit.fitted(CGRect(x: 0, y: 4, width: 800, height: 900), screen: screen,
+                                 reserved: 0, visibleTop: top) == nil)
+    }
+
+    @Test func accessibilityFramesFlipAroundTheMainScreen() {
+        let ax = CGRect(x: 10, y: 33, width: 500, height: 400)
+        let flipped = WindowFit.flipped(ax, mainScreenHeight: 982)
+        #expect(flipped == CGRect(x: 10, y: 549, width: 500, height: 400))
+        #expect(WindowFit.flipped(flipped, mainScreenHeight: 982) == ax)
     }
 }
 
@@ -293,24 +344,26 @@ private final class FakeDock: PreferenceDomain {
 }
 
 @Suite struct SystemDockHiderTests {
-    @Test func hidingSetsALongAutohideDelayAndRestartsTheDock() {
+    @Test func hidingSetsALongDelayAndSlowAnimationAndRestartsTheDock() {
         let dock = FakeDock(["autohide": false])
         var restarts = 0
         let hider = SystemDockHider(dock: dock, memory: freshDefaults(), restartDock: { restarts += 1 })
         hider.hide()
         #expect(dock.values["autohide"] as? Bool == true)
-        #expect((dock.values["autohide-delay"] as? Double) == SystemDockHider.hiddenDelay)
+        #expect(dock.values["autohide-delay"] as? Double == 1000)
+        #expect(dock.values["autohide-time-modifier"] as? Double == 1000)
         #expect(restarts == 1)
         #expect(hider.isHiding)
     }
 
     @Test func restoringPutsBackTheValuesFoundBefore() {
-        let dock = FakeDock(["autohide": false])
+        let dock = FakeDock(["autohide": false, "autohide-time-modifier": 0.2])
         var restarts = 0
         let hider = SystemDockHider(dock: dock, memory: freshDefaults(), restartDock: { restarts += 1 })
         hider.hide()
         hider.restore()
         #expect(dock.values["autohide"] as? Bool == false)
+        #expect(dock.values["autohide-time-modifier"] as? Double == 0.2)
         // The delay wasn't set before, so it is removed rather than set to a value of ours.
         #expect(dock.values["autohide-delay"] == nil)
         #expect(!hider.isHiding)
@@ -329,6 +382,23 @@ private final class FakeDock: PreferenceDomain {
         SystemDockHider(dock: dock, memory: memory, restartDock: { restarts += 1 }).restore()
         #expect(dock.values["autohide"] as? Bool == true)
         #expect(dock.values["autohide-delay"] as? Double == 0.5)
+        #expect(dock.values["autohide-time-modifier"] == nil)
+    }
+
+    @Test func valuesSavedByTheFirstVersionAreKept() {
+        // The first version hid with two keys and saved them without marks.
+        let dock = FakeDock(["autohide": true, "autohide-delay": 1000.0])
+        let memory = freshDefaults()
+        memory.set(["autohide": false], forKey: "SystemDockSettingsBeforeHiding")
+        var restarts = 0
+        let hider = SystemDockHider(dock: dock, memory: memory, restartDock: { restarts += 1 })
+        hider.hide()
+        #expect(dock.values["autohide-time-modifier"] as? Double == 1000)
+        #expect(restarts == 1)
+        hider.restore()
+        #expect(dock.values["autohide"] as? Bool == false)
+        #expect(dock.values["autohide-delay"] == nil)
+        #expect(dock.values["autohide-time-modifier"] == nil)
     }
 
     @Test func restoringWithoutHidingDoesNothing() {
