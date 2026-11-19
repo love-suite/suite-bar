@@ -18,7 +18,8 @@ final class DockController {
     private var mouseMonitors: [Any] = []
     private var isRevealed = true
     private var pending: DispatchWorkItem?
-    /// Where the hidden system Dock wakes up along the bottom edge.
+    /// Where the hidden system Dock wakes up: its edge, and the stretch along it.
+    private var systemDockEdge: ScreenEdge = .left
     private var systemDockSpan: ClosedRange<CGFloat>?
 
     private var options: DockOptions { DockSettings.shared.options }
@@ -123,10 +124,10 @@ final class DockController {
         fitter.reserved = options.autohides ? 0 : shown.maxY + 2 - screen.frame.minY
     }
 
-    // MARK: The pointer at the bottom edge
+    // MARK: The pointer at the system Dock's edge
 
-    /// Watches the pointer everywhere (no permission needed for mouse events), to keep it off the bottom
-    /// edge and to slide the Dock in when it hides automatically.
+    /// Watches the pointer everywhere (no permission needed for mouse events), to keep it off the hidden
+    /// system Dock's edge and to slide our Dock in when it hides automatically.
     private func setWatchingPointer(_ watching: Bool) {
         if watching, mouseMonitors.isEmpty {
             let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
@@ -143,38 +144,44 @@ final class DockController {
         }
     }
 
-    /// macOS 27 ignores the long `autohide-delay`: on the main screen's last row of pixels the hidden system
-    /// Dock wakes up and shows its icons' names. The pointer is put back a few points higher, too little to
-    /// be noticed; a screen below the main one is still reached.
-    private func keepOffBottomEdge(_ point: NSPoint, screen: NSScreen) {
-        // A stopped Dock can't wake up: the whole edge is free.
+    /// macOS 27 ignores the long `autohide-delay`: on the outermost pixels of its edge the hidden system
+    /// Dock wakes up and shows its icons' names. Along its short stretch of that edge (the middle of the left
+    /// edge), the pointer is put back a few points in, too little to be noticed; a screen beyond is reached.
+    private func keepOffSystemDockEdge(_ point: NSPoint, screen: NSScreen) {
+        // A stopped Dock can't wake up: its edge is free.
         guard !agent.isStopped else { return }
         let others = NSScreen.screens.dropFirst().map(\.frame)
-        let span = systemDockSpan ?? screen.frame.minX...screen.frame.maxX
-        guard let target = BottomEdge.guarded(point, screen: screen.frame, span: span, others: others)
+        let whole = systemDockEdge == .bottom ? screen.frame.minX...screen.frame.maxX
+                                              : screen.frame.minY...screen.frame.maxY
+        guard let target = EdgeGuard.guarded(point, screen: screen.frame, edge: systemDockEdge,
+                                             span: systemDockSpan ?? whole, others: others)
         else { return }
         CGWarpMouseCursorPosition(CGPoint(x: target.x, y: screen.frame.maxY - target.y))
         // Without this, the pointer would freeze for a moment after being moved.
         CGAssociateMouseAndMouseCursorPosition(1)
     }
 
-    /// The stretch of the bottom edge the hidden system Dock covers: its icon list's frame through
-    /// Accessibility when allowed, otherwise an estimate from its preferences. A few points spare each side.
+    /// The edge the hidden system Dock is on and the stretch of it it covers: its icon list's frame through
+    /// Accessibility when allowed, otherwise an estimate from its preferences. A few points spare each end.
     private func measureSystemDock() {
         guard isActive, let screen else { return }
-        let measured = SystemDockMeasure.iconListSpan()
+        let preferences = AppPreferenceDomain(SystemDockReader.domain)
+        systemDockEdge = (preferences.value(forKey: "orientation") as? String).flatMap(ScreenEdge.init) ?? .bottom
+        let measured = SystemDockMeasure.iconListSpan(edge: systemDockEdge)
         let estimated: ClosedRange<CGFloat> = {
             let pinned = DockPins(SystemDockReader.currentApps())
-            let unpinned = NSWorkspace.shared.runningApplications.filter { app in
+            let running = NSWorkspace.shared.runningApplications.filter { app in
                 app.activationPolicy == .regular && app.bundleIdentifier != FinderDesktop.bundleID
-                    && !pinned.contains(DockApp(url: app.bundleURL ?? URL(fileURLWithPath: "/"),
-                                                bundleID: app.bundleIdentifier))
-            }.count
-            let count = SystemDockSpan.itemCount(preferences: AppPreferenceDomain(SystemDockReader.domain),
-                                                 unpinnedRunning: unpinned)
-            let tileSize = (AppPreferenceDomain(SystemDockReader.domain).value(forKey: "tilesize") as? NSNumber)
-                .map { CGFloat($0.doubleValue) } ?? 16
-            return SystemDockSpan.estimate(itemCount: count, tileSize: tileSize, screen: screen.frame)
+            }
+            let unpinned = running.filter { app in
+                !pinned.contains(DockApp(url: app.bundleURL ?? URL(fileURLWithPath: "/"),
+                                         bundleID: app.bundleIdentifier))
+            }
+            let count = SystemDockSpan.itemCount(preferences: preferences, running: running.count,
+                                                 unpinnedRunning: unpinned.count)
+            let tileSize = (preferences.value(forKey: "tilesize") as? NSNumber).map { CGFloat($0.doubleValue) } ?? 16
+            return SystemDockSpan.estimate(itemCount: count, tileSize: tileSize, screen: screen.frame,
+                                           edge: systemDockEdge)
         }()
         let span = measured ?? estimated
         systemDockSpan = (span.lowerBound - 12)...(span.upperBound + 12)
@@ -194,10 +201,10 @@ final class DockController {
     private func pointerMoved() {
         guard let panel, let shown = shownFrame, let screen else { return }
         let point = NSEvent.mouseLocation
-        keepOffBottomEdge(point, screen: screen)
+        keepOffSystemDockEdge(point, screen: screen)
         guard options.autohides else { return }
         if !isRevealed {
-            let atEdge = point.y <= screen.frame.minY + BottomEdge.gap + 1
+            let atEdge = point.y <= screen.frame.minY + 2
                 && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
             atEdge ? schedule(0.12) { [weak self] in self?.reveal() } : cancelPending()
         } else {
@@ -277,7 +284,8 @@ final class DockController {
 
 /// Asks the system Dock (through Accessibility, when allowed) where its icons are.
 enum SystemDockMeasure {
-    static func iconListSpan() -> ClosedRange<CGFloat>? {
+    /// Along `edge`: x for the bottom, y (bottom-left origin) for the sides.
+    static func iconListSpan(edge: ScreenEdge) -> ClosedRange<CGFloat>? {
         guard AXIsProcessTrusted(),
               let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
         else { return nil }
@@ -292,8 +300,13 @@ enum SystemDockMeasure {
             guard role as? String == kAXListRole as String,
                   let position: CGPoint = axValue(element, kAXPositionAttribute, .cgPoint),
                   let size: CGSize = axValue(element, kAXSizeAttribute, .cgSize),
-                  size.width > 0, size.width > size.height else { continue }
-            return position.x...(position.x + size.width)
+                  size.width > 0, size.height > 0 else { continue }
+            if edge == .bottom {
+                guard size.width > size.height else { continue }
+                return position.x...(position.x + size.width)
+            }
+            guard size.height > size.width, let mainHeight = NSScreen.screens.first?.frame.height else { continue }
+            return (mainHeight - position.y - size.height)...(mainHeight - position.y)
         }
         return nil
     }
