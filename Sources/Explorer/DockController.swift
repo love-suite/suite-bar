@@ -8,6 +8,7 @@ final class DockController {
     static let shared = DockController()
 
     private var panel: DockPanel?
+    private var shield: DockShield?
     private let hider = DockController.makeHider()
     private let fitter = WindowFitter()
     private var observers: [NSObjectProtocol] = []
@@ -35,6 +36,7 @@ final class DockController {
     /// Explorer quits: the system Dock comes back as it was.
     func stop() {
         panel?.orderOut(nil)
+        shield?.orderOut(nil)
         fitter.reserved = 0
         hider.restore()
     }
@@ -50,6 +52,7 @@ final class DockController {
                 let panel = DockPanel()
                 panel.dockView.onSizeChange = { [weak self] in self?.place() }
                 self.panel = panel
+                shield = DockShield { [weak self] in self?.pointerMoved() }
             }
             panel?.dockView.geometry = options.geometry
             setAutohides(options.autohides)
@@ -58,6 +61,7 @@ final class DockController {
         } else {
             setAutohides(false)
             panel?.orderOut(nil)
+            shield?.orderOut(nil)
             fitter.reserved = 0
             hider.restore()
         }
@@ -86,6 +90,7 @@ final class DockController {
 
     private func place() {
         guard isActive, let panel, let shown = shownFrame, let screen else { return }
+        shield?.cover(screen, below: shown.minY)
         if isRevealed {
             if panel.frame != shown { panel.setFrame(shown, display: true) }
             panel.orderFrontRegardless()
@@ -174,6 +179,58 @@ final class DockController {
             try? process.run()
             process.waitUntilExit()
         })
+    }
+}
+
+/// An invisible strip along the main screen's bottom edge, just above the system Dock's level. macOS no
+/// longer honours a long `autohide-delay`: the hidden system Dock starts to slide in at the edge (slowly,
+/// with our `autohide-time-modifier`) and shows its icons' names under the pointer. The strip takes the
+/// pointer there instead, so the system Dock never sees it; it also tells our Dock to slide in.
+final class DockShield: NSPanel {
+    private let onPointer: () -> Void
+
+    init(onPointer: @escaping () -> Void) {
+        self.onPointer = onPointer
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 100, height: 4),
+                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        isOpaque = false
+        // Not quite clear: fully clear pixels let the pointer through to the system Dock.
+        backgroundColor = NSColor(white: 0, alpha: 0.01)
+        hasShadow = false
+        hidesOnDeactivate = false
+        isMovable = false
+        ignoresMouseEvents = false
+        let view = TrackingView()
+        view.onPointer = { [weak self] in self?.onPointer() }
+        contentView = view
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    /// Covers the screen's bottom edge, up to `top` (where our Dock starts), at least 4 points high.
+    func cover(_ screen: NSScreen, below top: CGFloat) {
+        let height = max(4, min(top - screen.frame.minY, 8))
+        let frame = NSRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: height)
+        if self.frame != frame { setFrame(frame, display: false) }
+        orderFrontRegardless()
+    }
+
+    private final class TrackingView: NSView {
+        var onPointer: (() -> Void)?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited,
+                                                                   .mouseMoved, .inVisibleRect], owner: self))
+        }
+
+        override func mouseEntered(with event: NSEvent) { onPointer?() }
+        override func mouseMoved(with event: NSEvent) { onPointer?() }
+        override func mouseExited(with event: NSEvent) { onPointer?() }
     }
 }
 

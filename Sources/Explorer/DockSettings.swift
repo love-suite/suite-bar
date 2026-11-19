@@ -31,6 +31,8 @@ struct DockSettingsView: View {
                       { DockSettings.shared.options[keyPath: keyPath] = $0 })
     }
 
+    // Every row is always there (greyed out with the System Dock) and every note keeps its text: the
+    // tab's height must not change, or the settings window lays it out wrong.
     var body: some View {
         let options = DockSettings.shared.options
         Form {
@@ -41,38 +43,40 @@ struct DockSettingsView: View {
                         Text("New Dock").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    Note(options.isShown
-                         ? "Explorer's Dock replaces the system Dock, hidden with Finder's icon. It starts with the "
-                           + "system Dock's apps; drag them to reorder them, or up and away to remove them. "
-                           + "Shown while Explorer manages files (General)."
-                         : "The system Dock, with Finder's icon. Its settings are the ones you had before.")
+                    Note("The New Dock replaces the system Dock, hidden with Finder's icon, whose settings come "
+                         + "back with the System Dock. Shown while Explorer manages files (General).")
                 }
             }
-            if options.isShown {
-                Section("New Dock") {
-                    Slider(value: dock(\.iconSize), in: DockGeometry.sizes, step: 8) {
-                        Text("Size")
-                    } minimumValueLabel: {
-                        Text("Small")
-                    } maximumValueLabel: {
-                        Text("Large")
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Toggle("Automatically hide and show the Dock", isOn: dock(\.autohides))
-                        Note(options.autohides
-                             ? "It shows when the pointer reaches the bottom of the screen; windows go all the way down."
-                             : "It stays on screen, and maximized windows end above it.")
-                    }
-                    if !options.autohides && !WindowFitter.isPermitted {
-                        HStack(alignment: .firstTextBaseline) {
-                            Note("To keep other apps' windows above the Dock, Explorer needs the Accessibility "
-                                 + "permission (Privacy & Security › Accessibility).")
-                            Spacer()
+            Section("New Dock") {
+                Slider(value: dock(\.iconSize), in: DockGeometry.sizes, step: 8) {
+                    Text("Size")
+                } minimumValueLabel: {
+                    Text("Small")
+                } maximumValueLabel: {
+                    Text("Large")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Automatically hide and show the Dock", isOn: dock(\.autohides))
+                    Note("It slides in when the pointer reaches the bottom of the screen. Otherwise it stays, "
+                         + "and maximized windows end above it.")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Keep other apps' windows above the Dock")
+                        Spacer()
+                        if WindowFitter.isPermitted {
+                            Label("Allowed", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        } else {
                             Button("Allow…") { WindowFitter.askForPermission() }
                         }
                     }
+                    Note("Needs the Accessibility permission (Privacy & Security › Accessibility). "
+                         + "Explorer's own windows don't.")
                 }
+                .disabled(options.autohides)
             }
+            .disabled(!options.isShown)
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
