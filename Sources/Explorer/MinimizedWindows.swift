@@ -2,9 +2,9 @@ import AppKit
 import ApplicationServices
 import ExplorerCore
 
-/// Other apps' minimized windows, for our Dock: the system Dock that would show them is hidden. Found and
-/// brought back through the Accessibility API (the user's permission, as for keeping windows above the
-/// Dock); without it, the Dock shows none.
+/// Minimized windows, for our Dock: the system Dock that would show them is hidden. Explorer's own are
+/// followed directly; other apps' are found and brought back through the Accessibility API (the user's
+/// permission, as for keeping windows above the Dock), without which the Dock shows only Explorer's.
 final class MinimizedWindows {
     static let shared = MinimizedWindows()
     static let didChange = Notification.Name("MinimizedWindowsDidChange")
@@ -20,7 +20,9 @@ final class MinimizedWindows {
 
     private struct Entry {
         let window: DockWindow
-        let element: AXUIElement
+        /// Another app's window, or one of Explorer's.
+        var element: AXUIElement?
+        var own: NSWindow?
         let pid: pid_t
     }
 
@@ -34,10 +36,12 @@ final class MinimizedWindows {
     private var observers: [pid_t: AXObserver] = [:]
     private var notifications: [NSObjectProtocol] = []
     private var retry: Timer?
+    private var watchesOwnWindows = false
 
     // MARK: Watching apps
 
     private func start() {
+        watchOwnWindows()
         guard AXIsProcessTrusted() else {
             retry?.invalidate()
             retry = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -67,9 +71,35 @@ final class MinimizedWindows {
         retry?.invalidate()
         retry = nil
         notifications.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
+        notifications.forEach { NotificationCenter.default.removeObserver($0) }
         notifications.removeAll()
+        watchesOwnWindows = false
         for pid in Array(observers.keys) { unwatch(pid) }
         entries = []
+    }
+
+    private func watchOwnWindows() {
+        guard !watchesOwnWindows else { return }
+        watchesOwnWindows = true
+        let center = NotificationCenter.default
+        notifications.append(center.addObserver(forName: NSWindow.didMiniaturizeNotification, object: nil,
+                                                queue: .main) { [weak self] note in
+            guard let self, let window = note.object as? NSWindow,
+                  !self.entries.contains(where: { $0.own === window }) else { return }
+            let me = DockApp(url: Bundle.main.bundleURL, bundleID: Bundle.main.bundleIdentifier, name: "Explorer")
+            let title = window.title.isEmpty ? "Explorer" : window.title
+            self.entries.append(Entry(window: DockWindow(id: self.nextID, title: title, app: me), element: nil,
+                                      own: window, pid: getpid()))
+            self.nextID += 1
+        })
+        notifications.append(center.addObserver(forName: NSWindow.didDeminiaturizeNotification, object: nil,
+                                                queue: .main) { [weak self] note in
+            self?.entries.removeAll { $0.own === (note.object as? NSWindow) }
+        })
+        notifications.append(center.addObserver(forName: NSWindow.willCloseNotification, object: nil,
+                                                queue: .main) { [weak self] note in
+            self?.entries.removeAll { $0.own === (note.object as? NSWindow) }
+        })
     }
 
     private func watch(_ app: NSRunningApplication) {
@@ -112,12 +142,12 @@ final class MinimizedWindows {
             add(element, pid: pid)
         default:
             // Brought back, closed, or its app gone.
-            entries.removeAll { CFEqual($0.element, element) }
+            entries.removeAll { $0.element.map { CFEqual($0, element) } ?? false }
         }
     }
 
     private func add(_ element: AXUIElement, pid: pid_t) {
-        guard !entries.contains(where: { CFEqual($0.element, element) }),
+        guard !entries.contains(where: { $0.element.map { CFEqual($0, element) } ?? false }),
               let app = NSRunningApplication(processIdentifier: pid), let url = app.bundleURL else { return }
         AXUIElementSetMessagingTimeout(element, 0.3)
         let title = Self.string(element, kAXTitleAttribute).flatMap { $0.isEmpty ? nil : $0 }
@@ -125,7 +155,7 @@ final class MinimizedWindows {
         let window = DockWindow(id: nextID, title: title,
                                 app: DockApp(url: url, bundleID: app.bundleIdentifier, name: app.localizedName))
         nextID += 1
-        entries.append(Entry(window: window, element: element, pid: pid))
+        entries.append(Entry(window: window, element: element, own: nil, pid: pid))
     }
 
     // MARK: Bringing back
@@ -133,8 +163,14 @@ final class MinimizedWindows {
     func restore(_ id: Int) {
         guard let entry = entries.first(where: { $0.window.id == id }) else { return }
         entries.removeAll { $0.window.id == id }
-        AXUIElementSetAttributeValue(entry.element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
-        AXUIElementPerformAction(entry.element, kAXRaiseAction as CFString)
+        if let own = entry.own {
+            NSApp.activate(ignoringOtherApps: true)
+            own.deminiaturize(nil)
+            return
+        }
+        guard let element = entry.element else { return }
+        AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, kCFBooleanFalse)
+        AXUIElementPerformAction(element, kAXRaiseAction as CFString)
         guard let app = NSRunningApplication(processIdentifier: entry.pid) else { return }
         app.activate(options: [])
         // Activation from an app in the background may be refused; reopening the app is the fallback.
