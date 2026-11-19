@@ -43,7 +43,7 @@ struct DockSettingsView: View {
                         Text("New Dock").tag(true)
                     }
                     .pickerStyle(.segmented)
-                    Note("The New Dock replaces the system Dock, hidden with Finder's icon, whose settings come "
+                    DockNote("The New Dock replaces the system Dock, hidden with Finder's icon, whose settings come "
                          + "back with the System Dock. Shown while Explorer manages files (General).")
                 }
             }
@@ -57,7 +57,7 @@ struct DockSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Automatically hide and show the Dock", isOn: dock(\.autohides))
-                    Note("It slides in when the pointer reaches the bottom of the screen. Otherwise it stays, "
+                    DockNote("It slides in when the pointer reaches the bottom of the screen. Otherwise it stays, "
                          + "and maximized windows end above it.")
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -71,7 +71,7 @@ struct DockSettingsView: View {
                             Button("Allow…") { WindowFitter.askForPermission() }
                         }
                     }
-                    Note("Needs the Accessibility permission (Privacy & Security › Accessibility). "
+                    DockNote("Needs the Accessibility permission (Privacy & Security › Accessibility). "
                          + "Explorer's own windows don't.")
                 }
                 .disabled(options.autohides)
@@ -83,5 +83,15 @@ struct DockSettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: WindowFitter.permissionDidChange)) { _ in
             model.objectWillChange.send()
         }
+    }
+}
+
+/// Grey explanation under a setting, as in the other tabs.
+private struct DockNote: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
