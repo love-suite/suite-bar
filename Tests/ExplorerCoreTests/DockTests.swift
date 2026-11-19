@@ -316,22 +316,37 @@ private func freshDefaults() -> UserDefaults {
 @Suite struct BottomEdgeTests {
     let screen = CGRect(x: 0, y: 0, width: 1470, height: 956)
 
-    @Test func theLastRowSendsThePointerBackUp() {
-        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [])
+    let span: ClosedRange<CGFloat> = 600...870
+
+    @Test func theLastRowUnderTheSystemDockSendsThePointerBackUp() {
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, span: span, others: [])
                 == CGPoint(x: 700, y: BottomEdge.gap))
-        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 1), screen: screen, others: []) != nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 1), screen: screen, span: span, others: []) != nil)
     }
 
-    @Test func elsewhereThePointerStays() {
-        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 3), screen: screen, others: []) == nil)
-        #expect(BottomEdge.guarded(CGPoint(x: 1600, y: 0), screen: screen, others: []) == nil)
+    @Test func elsewhereThePointerSlidesAlongTheEdge() {
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 3), screen: screen, span: span, others: []) == nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 100, y: 0), screen: screen, span: span, others: []) == nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 0, y: 0), screen: screen, span: span, others: []) == nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 1600, y: 0), screen: screen, span: 0...2000, others: []) == nil)
     }
 
     @Test func aScreenBelowIsStillReached() {
         let below = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
-        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [below]) == nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, span: span, others: [below]) == nil)
         let beside = CGRect(x: 1470, y: 0, width: 1920, height: 1080)
-        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [beside]) != nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, span: span, others: [beside]) != nil)
+    }
+
+    @Test func theSystemDockSpanIsCentredAndCounted() {
+        let estimate = SystemDockSpan.estimate(itemCount: 10, tileSize: 16, screen: screen)
+        // 10 tiles of 24, two separators of 16, two ends of 24: 320 wide, centred on 735.
+        #expect(estimate == CGFloat(575)...CGFloat(895))
+        #expect(SystemDockSpan.estimate(itemCount: 500, tileSize: 16, screen: screen) == 0...1470)
+        let dock = FakeDock(["persistent-apps": [1, 2, 3], "persistent-others": [1], "recent-apps": [1, 2]])
+        #expect(SystemDockSpan.itemCount(preferences: dock, unpinnedRunning: 4) == 2 + 3 + 1 + 2 + 4)
+        dock.values["show-recents"] = false
+        #expect(SystemDockSpan.itemCount(preferences: dock, unpinnedRunning: 0) == 6)
     }
 }
 
@@ -374,18 +389,20 @@ private final class FakeDock: PreferenceDomain {
         #expect(dock.values["autohide"] as? Bool == true)
         #expect(dock.values["autohide-delay"] as? Double == 1000)
         #expect(dock.values["autohide-time-modifier"] as? Double == 1000)
+        #expect(dock.values["tilesize"] as? Double == 16)
         #expect(restarts == 1)
         #expect(hider.isHiding)
     }
 
     @Test func restoringPutsBackTheValuesFoundBefore() {
-        let dock = FakeDock(["autohide": false, "autohide-time-modifier": 0.2])
+        let dock = FakeDock(["autohide": false, "autohide-time-modifier": 0.2, "tilesize": 36])
         var restarts = 0
         let hider = SystemDockHider(dock: dock, memory: freshDefaults(), restartDock: { restarts += 1 })
         hider.hide()
         hider.restore()
         #expect(dock.values["autohide"] as? Bool == false)
         #expect(dock.values["autohide-time-modifier"] as? Double == 0.2)
+        #expect(dock.values["tilesize"] as? Int == 36)
         // The delay wasn't set before, so it is removed rather than set to a value of ours.
         #expect(dock.values["autohide-delay"] == nil)
         #expect(!hider.isHiding)

@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import ExplorerCore
 
 /// Explorer's own Dock, in place of the system one: shown at the bottom of the main screen while
@@ -16,6 +17,8 @@ final class DockController {
     private var mouseMonitors: [Any] = []
     private var isRevealed = true
     private var pending: DispatchWorkItem?
+    /// Where the hidden system Dock wakes up along the bottom edge.
+    private var systemDockSpan: ClosedRange<CGFloat>?
 
     private var options: DockOptions { DockSettings.shared.options }
     private var isActive: Bool { options.isShown && FinderReplacement.shared.usesExplorer }
@@ -29,6 +32,13 @@ final class DockController {
         }
         observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
                                             object: nil, queue: .main) { [weak self] _ in self?.place() })
+        // The system Dock grows and shrinks with the running apps.
+        let workspace = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            observers.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.measureSystemDock() }
+            })
+        }
         apply()
     }
 
@@ -64,9 +74,12 @@ final class DockController {
             fitter.reserved = 0
             hider.restore()
         }
-        // The screen's visible area follows the system Dock once it has restarted.
+        // The screen's visible area and the system Dock's size follow once it has restarted.
         for delay in [1.0, 3.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.place() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.place()
+                self?.measureSystemDock()
+            }
         }
     }
 
@@ -122,10 +135,34 @@ final class DockController {
     /// be noticed; a screen below the main one is still reached.
     private func keepOffBottomEdge(_ point: NSPoint, screen: NSScreen) {
         let others = NSScreen.screens.dropFirst().map(\.frame)
-        guard let target = BottomEdge.guarded(point, screen: screen.frame, others: others) else { return }
+        let span = systemDockSpan ?? screen.frame.minX...screen.frame.maxX
+        guard let target = BottomEdge.guarded(point, screen: screen.frame, span: span, others: others)
+        else { return }
         CGWarpMouseCursorPosition(CGPoint(x: target.x, y: screen.frame.maxY - target.y))
         // Without this, the pointer would freeze for a moment after being moved.
         CGAssociateMouseAndMouseCursorPosition(1)
+    }
+
+    /// The stretch of the bottom edge the hidden system Dock covers: its icon list's frame through
+    /// Accessibility when allowed, otherwise an estimate from its preferences. A few points spare each side.
+    private func measureSystemDock() {
+        guard isActive, let screen else { return }
+        let measured = SystemDockMeasure.iconListSpan()
+        let estimated: ClosedRange<CGFloat> = {
+            let pinned = DockPins(SystemDockReader.currentApps())
+            let unpinned = NSWorkspace.shared.runningApplications.filter { app in
+                app.activationPolicy == .regular && app.bundleIdentifier != FinderDesktop.bundleID
+                    && !pinned.contains(DockApp(url: app.bundleURL ?? URL(fileURLWithPath: "/"),
+                                                bundleID: app.bundleIdentifier))
+            }.count
+            let count = SystemDockSpan.itemCount(preferences: AppPreferenceDomain(SystemDockReader.domain),
+                                                 unpinnedRunning: unpinned)
+            let tileSize = (AppPreferenceDomain(SystemDockReader.domain).value(forKey: "tilesize") as? NSNumber)
+                .map { CGFloat($0.doubleValue) } ?? 16
+            return SystemDockSpan.estimate(itemCount: count, tileSize: tileSize, screen: screen.frame)
+        }()
+        let span = measured ?? estimated
+        systemDockSpan = (span.lowerBound - 12)...(span.upperBound + 12)
     }
 
     // MARK: Automatic hiding
@@ -201,6 +238,39 @@ final class DockController {
             try? process.run()
             process.waitUntilExit()
         })
+    }
+}
+
+/// Asks the system Dock (through Accessibility, when allowed) where its icons are.
+enum SystemDockMeasure {
+    static func iconListSpan() -> ClosedRange<CGFloat>? {
+        guard AXIsProcessTrusted(),
+              let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first
+        else { return nil }
+        let app = AXUIElementCreateApplication(dock.processIdentifier)
+        AXUIElementSetMessagingTimeout(app, 0.3)
+        var children: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXChildrenAttribute as CFString, &children) == .success,
+              let elements = children as? [AXUIElement] else { return nil }
+        for element in elements {
+            var role: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            guard role as? String == kAXListRole as String,
+                  let position: CGPoint = axValue(element, kAXPositionAttribute, .cgPoint),
+                  let size: CGSize = axValue(element, kAXSizeAttribute, .cgSize),
+                  size.width > 0, size.width > size.height else { continue }
+            return position.x...(position.x + size.width)
+        }
+        return nil
+    }
+
+    private static func axValue<T>(_ element: AXUIElement, _ attribute: String, _ type: AXValueType) -> T? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+        let pointer = UnsafeMutablePointer<T>.allocate(capacity: 1)
+        defer { pointer.deallocate() }
+        return AXValueGetValue(value as! AXValue, type, pointer) ? pointer.pointee : nil
     }
 }
 

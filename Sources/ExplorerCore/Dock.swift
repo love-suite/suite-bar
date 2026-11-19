@@ -306,16 +306,40 @@ public enum BottomEdge {
     /// How far above the bottom the pointer is put back.
     public static let gap: CGFloat = 3
 
-    /// Where the pointer goes instead of `point`, or nil when it can stay: off the bottom row, or going on
-    /// to another screen placed right below.
-    public static func guarded(_ point: CGPoint, screen: CGRect, others: [CGRect]) -> CGPoint? {
-        guard point.x >= screen.minX, point.x < screen.maxX,
+    /// Where the pointer goes instead of `point`, or nil when it can stay: off the bottom row, outside the
+    /// stretch `span` where the hidden system Dock wakes up (so it still slides along the rest of the edge
+    /// and reaches the corners), or going on to another screen placed right below.
+    public static func guarded(_ point: CGPoint, screen: CGRect, span: ClosedRange<CGFloat>,
+                               others: [CGRect]) -> CGPoint? {
+        guard span.contains(point.x), point.x >= screen.minX, point.x < screen.maxX,
               // AppKit puts the last row at 0 or 1 depending on rounding.
               point.y < screen.minY + 1.5, point.y >= screen.minY - 1 else { return nil }
         let screenBelow = others.contains { other in
             abs(other.maxY - screen.minY) <= 1 && point.x >= other.minX && point.x < other.maxX
         }
         return screenBelow ? nil : CGPoint(x: point.x, y: screen.minY + gap)
+    }
+}
+
+/// Where the hidden system Dock sits along the bottom edge, when Accessibility can't say: centred, as
+/// wide as its icons.
+public enum SystemDockSpan {
+    /// `itemCount` counts every tile: Finder, apps, folders, the Trash.
+    public static func estimate(itemCount: Int, tileSize: CGFloat, screen: CGRect) -> ClosedRange<CGFloat> {
+        // Each tile is a little wider than its icon; two separators; generous ends.
+        let width = CGFloat(itemCount) * (tileSize + 8) + 2 * 16 + 2 * 24
+        let half = min(width, screen.width) / 2
+        return (screen.midX - half)...(screen.midX + half)
+    }
+
+    /// The tiles the system Dock shows, from its preferences: Finder and the Trash, pinned apps and folders,
+    /// recent apps if shown, and the running apps that aren't pinned (`unpinnedRunning`).
+    public static func itemCount(preferences: PreferenceDomain, unpinnedRunning: Int) -> Int {
+        let pinned = (preferences.value(forKey: "persistent-apps") as? [Any])?.count ?? 0
+        let others = (preferences.value(forKey: "persistent-others") as? [Any])?.count ?? 0
+        let showsRecents = (preferences.value(forKey: "show-recents") as? Bool) ?? true
+        let recents = showsRecents ? ((preferences.value(forKey: "recent-apps") as? [Any])?.count ?? 0) : 0
+        return 2 + pinned + others + recents + unpinnedRunning
     }
 }
 
@@ -380,6 +404,8 @@ public final class SystemDockHider {
         ("autohide-delay", 1000.0),
         // Seconds the sliding in would take, should the Dock still decide to show (pushing at the edge).
         ("autohide-time-modifier", 1000.0),
+        // The smallest icons, so the stretch of the bottom edge where it wakes up is as short as can be.
+        ("tilesize", 16.0),
     ]
     private static let savedKey = "SystemDockSettingsBeforeHiding"
 
