@@ -50,6 +50,7 @@ final class DockController {
         setWatchingPointer(false)
         fitter.reserved = 0
         AppSwitcher.shared.isEnabled = false
+        MinimizedWindows.shared.parksWindows = false
         Self.restore(hider: hider, agent: agent)
     }
 
@@ -81,6 +82,7 @@ final class DockController {
             if options.stopsSystemDock { agent.stop() } else { agent.start() }
             // What stopped with the system Dock, Explorer does instead.
             AppSwitcher.shared.isEnabled = agent.isStopped
+            MinimizedWindows.shared.parksWindows = agent.isStopped
         } else {
             setAutohides(false)
             setWatchingPointer(false)
@@ -88,6 +90,7 @@ final class DockController {
             panel?.orderOut(nil)
             fitter.reserved = 0
             AppSwitcher.shared.isEnabled = false
+            MinimizedWindows.shared.parksWindows = false
             Self.restore(hider: hider, agent: agent)
         }
         // The screen's visible area and the system Dock's size follow once it has restarted.

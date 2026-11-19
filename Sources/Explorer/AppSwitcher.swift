@@ -92,6 +92,11 @@ final class AppSwitcher {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
             let shift = flags.contains(.maskShift)
+            if state == nil, Self.isMinimizeKey(event) {
+                // ⌘M does nothing without the system Dock; Explorer minimizes instead.
+                MinimizedWindows.shared.parkFrontWindow()
+                return nil
+            }
             if state == nil {
                 guard keyCode == AppSwitcherKey.tab, flags.contains(.maskCommand),
                       !flags.contains(.maskControl), !flags.contains(.maskAlternate) else { return pass }
@@ -113,6 +118,17 @@ final class AppSwitcher {
         default:
             return pass
         }
+    }
+
+    /// ⌘M alone, whatever the keyboard layout (the character typed, not the key's place).
+    private static func isMinimizeKey(_ event: CGEvent) -> Bool {
+        let flags = event.flags
+        guard flags.contains(.maskCommand), !flags.contains(.maskShift), !flags.contains(.maskControl),
+              !flags.contains(.maskAlternate) else { return false }
+        var length = 0
+        var characters = [UniChar](repeating: 0, count: 4)
+        event.keyboardGetUnicodeString(maxStringLength: 4, actualStringLength: &length, unicodeString: &characters)
+        return String(utf16CodeUnits: characters, count: length).lowercased() == "m"
     }
 
     // MARK: The switcher
