@@ -48,6 +48,7 @@ final class DockController {
         panel?.orderOut(nil)
         setWatchingPointer(false)
         fitter.reserved = 0
+        AppSwitcher.shared.isEnabled = false
         Self.restore(hider: hider, agent: agent)
     }
 
@@ -76,11 +77,14 @@ final class DockController {
             // Hidden either way, should it be started again by something else (a log out, say).
             hider.hide()
             if options.stopsSystemDock { agent.stop() } else { agent.start() }
+            // What stopped with the system Dock, Explorer does instead.
+            AppSwitcher.shared.isEnabled = agent.isStopped
         } else {
             setAutohides(false)
             setWatchingPointer(false)
             panel?.orderOut(nil)
             fitter.reserved = 0
+            AppSwitcher.shared.isEnabled = false
             Self.restore(hider: hider, agent: agent)
         }
         // The screen's visible area and the system Dock's size follow once it has restarted.
