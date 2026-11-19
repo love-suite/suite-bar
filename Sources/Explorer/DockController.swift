@@ -8,7 +8,6 @@ final class DockController {
     static let shared = DockController()
 
     private var panel: DockPanel?
-    private var shield: DockShield?
     private let hider = DockController.makeHider()
     private let fitter = WindowFitter()
     private var observers: [NSObjectProtocol] = []
@@ -36,7 +35,7 @@ final class DockController {
     /// Explorer quits: the system Dock comes back as it was.
     func stop() {
         panel?.orderOut(nil)
-        shield?.orderOut(nil)
+        setWatchingPointer(false)
         fitter.reserved = 0
         hider.restore()
     }
@@ -52,16 +51,16 @@ final class DockController {
                 let panel = DockPanel()
                 panel.dockView.onSizeChange = { [weak self] in self?.place() }
                 self.panel = panel
-                shield = DockShield { [weak self] in self?.pointerMoved() }
             }
+            setWatchingPointer(true)
             panel?.dockView.geometry = options.geometry
             setAutohides(options.autohides)
             place()
             hider.hide()
         } else {
             setAutohides(false)
+            setWatchingPointer(false)
             panel?.orderOut(nil)
-            shield?.orderOut(nil)
             fitter.reserved = 0
             hider.restore()
         }
@@ -90,7 +89,6 @@ final class DockController {
 
     private func place() {
         guard isActive, let panel, let shown = shownFrame, let screen else { return }
-        shield?.cover(screen, below: shown.minY)
         if isRevealed {
             if panel.frame != shown { panel.setFrame(shown, display: true) }
             panel.orderFrontRegardless()
@@ -99,11 +97,13 @@ final class DockController {
         fitter.reserved = options.autohides ? 0 : shown.maxY + 2 - screen.frame.minY
     }
 
-    // MARK: Automatic hiding
+    // MARK: The pointer at the bottom edge
 
-    private func setAutohides(_ autohides: Bool) {
-        if autohides, mouseMonitors.isEmpty {
-            let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+    /// Watches the pointer everywhere (no permission needed for mouse events), to keep it off the bottom
+    /// edge and to slide the Dock in when it hides automatically.
+    private func setWatchingPointer(_ watching: Bool) {
+        if watching, mouseMonitors.isEmpty {
+            let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
             if let global = NSEvent.addGlobalMonitorForEvents(matching: events, handler: { [weak self] _ in
                 self?.pointerMoved()
             }) { mouseMonitors.append(global) }
@@ -111,11 +111,30 @@ final class DockController {
                 self?.pointerMoved()
                 return event
             }) { mouseMonitors.append(local) }
-            conceal()
-        } else if !autohides, !mouseMonitors.isEmpty {
+        } else if !watching, !mouseMonitors.isEmpty {
             mouseMonitors.forEach(NSEvent.removeMonitor)
             mouseMonitors.removeAll()
-            pending?.cancel()
+        }
+    }
+
+    /// macOS 27 ignores the long `autohide-delay`: on the main screen's last row of pixels the hidden system
+    /// Dock wakes up and shows its icons' names. The pointer is put back a few points higher, too little to
+    /// be noticed; a screen below the main one is still reached.
+    private func keepOffBottomEdge(_ point: NSPoint, screen: NSScreen) {
+        let others = NSScreen.screens.dropFirst().map(\.frame)
+        guard let target = BottomEdge.guarded(point, screen: screen.frame, others: others) else { return }
+        CGWarpMouseCursorPosition(CGPoint(x: target.x, y: screen.frame.maxY - target.y))
+        // Without this, the pointer would freeze for a moment after being moved.
+        CGAssociateMouseAndMouseCursorPosition(1)
+    }
+
+    // MARK: Automatic hiding
+
+    private func setAutohides(_ autohides: Bool) {
+        if autohides, isRevealed {
+            conceal()
+        } else if !autohides {
+            cancelPending()
             isRevealed = true
         }
     }
@@ -123,8 +142,11 @@ final class DockController {
     private func pointerMoved() {
         guard let panel, let shown = shownFrame, let screen else { return }
         let point = NSEvent.mouseLocation
+        keepOffBottomEdge(point, screen: screen)
+        guard options.autohides else { return }
         if !isRevealed {
-            let atEdge = point.y <= screen.frame.minY + 1 && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
+            let atEdge = point.y <= screen.frame.minY + BottomEdge.gap + 1
+                && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
             atEdge ? schedule(0.12) { [weak self] in self?.reveal() } : cancelPending()
         } else {
             let near = shown.insetBy(dx: -8, dy: -8).union(NSRect(x: shown.minX, y: screen.frame.minY,
@@ -179,58 +201,6 @@ final class DockController {
             try? process.run()
             process.waitUntilExit()
         })
-    }
-}
-
-/// An invisible strip along the main screen's bottom edge, just above the system Dock's level. macOS no
-/// longer honours a long `autohide-delay`: the hidden system Dock starts to slide in at the edge (slowly,
-/// with our `autohide-time-modifier`) and shows its icons' names under the pointer. The strip takes the
-/// pointer there instead, so the system Dock never sees it; it also tells our Dock to slide in.
-final class DockShield: NSPanel {
-    private let onPointer: () -> Void
-
-    init(onPointer: @escaping () -> Void) {
-        self.onPointer = onPointer
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 100, height: 4),
-                   styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
-        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
-        isOpaque = false
-        // Not quite clear: fully clear pixels let the pointer through to the system Dock.
-        backgroundColor = NSColor(white: 0, alpha: 0.01)
-        hasShadow = false
-        hidesOnDeactivate = false
-        isMovable = false
-        ignoresMouseEvents = false
-        let view = TrackingView()
-        view.onPointer = { [weak self] in self?.onPointer() }
-        contentView = view
-    }
-
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
-
-    /// Covers the screen's bottom edge, up to `top` (where our Dock starts), at least 4 points high.
-    func cover(_ screen: NSScreen, below top: CGFloat) {
-        let height = max(4, min(top - screen.frame.minY, 8))
-        let frame = NSRect(x: screen.frame.minX, y: screen.frame.minY, width: screen.frame.width, height: height)
-        if self.frame != frame { setFrame(frame, display: false) }
-        orderFrontRegardless()
-    }
-
-    private final class TrackingView: NSView {
-        var onPointer: (() -> Void)?
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseEnteredAndExited,
-                                                                   .mouseMoved, .inVisibleRect], owner: self))
-        }
-
-        override func mouseEntered(with event: NSEvent) { onPointer?() }
-        override func mouseMoved(with event: NSEvent) { onPointer?() }
-        override func mouseExited(with event: NSEvent) { onPointer?() }
     }
 }
 

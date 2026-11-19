@@ -300,6 +300,25 @@ public enum WindowFit {
     }
 }
 
+/// Keeps the pointer off the main screen's last row of pixels, where the hidden system Dock wakes up.
+/// Points in screen coordinates, origin bottom left.
+public enum BottomEdge {
+    /// How far above the bottom the pointer is put back.
+    public static let gap: CGFloat = 3
+
+    /// Where the pointer goes instead of `point`, or nil when it can stay: off the bottom row, or going on
+    /// to another screen placed right below.
+    public static func guarded(_ point: CGPoint, screen: CGRect, others: [CGRect]) -> CGPoint? {
+        guard point.x >= screen.minX, point.x < screen.maxX,
+              // AppKit puts the last row at 0 or 1 depending on rounding.
+              point.y < screen.minY + 1.5, point.y >= screen.minY - 1 else { return nil }
+        let screenBelow = others.contains { other in
+            abs(other.maxY - screen.minY) <= 1 && point.x >= other.minX && point.x < other.maxX
+        }
+        return screenBelow ? nil : CGPoint(x: point.x, y: screen.minY + gap)
+    }
+}
+
 /// Orders a stack's items as the Dock does: the most recently added first.
 public enum DockStackOrder {
     public static func sorted(_ items: [(url: URL, added: Date?)]) -> [URL] {

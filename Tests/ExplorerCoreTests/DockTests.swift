@@ -313,6 +313,28 @@ private func freshDefaults() -> UserDefaults {
     }
 }
 
+@Suite struct BottomEdgeTests {
+    let screen = CGRect(x: 0, y: 0, width: 1470, height: 956)
+
+    @Test func theLastRowSendsThePointerBackUp() {
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [])
+                == CGPoint(x: 700, y: BottomEdge.gap))
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 1), screen: screen, others: []) != nil)
+    }
+
+    @Test func elsewhereThePointerStays() {
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 3), screen: screen, others: []) == nil)
+        #expect(BottomEdge.guarded(CGPoint(x: 1600, y: 0), screen: screen, others: []) == nil)
+    }
+
+    @Test func aScreenBelowIsStillReached() {
+        let below = CGRect(x: 0, y: -1080, width: 1920, height: 1080)
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [below]) == nil)
+        let beside = CGRect(x: 1470, y: 0, width: 1920, height: 1080)
+        #expect(BottomEdge.guarded(CGPoint(x: 700, y: 0), screen: screen, others: [beside]) != nil)
+    }
+}
+
 @Suite struct DockStackOrderTests {
     @Test func newestFirstThenByName() {
         let now = Date()
