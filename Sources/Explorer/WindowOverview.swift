@@ -169,7 +169,8 @@ final class WindowOverview {
             else { return }
             for window in content.windows where wanted.contains(window.windowID) {
                 let configuration = SCStreamConfiguration()
-                let scale = min(1, 900 / max(window.frame.width, 1))
+                // Enlarged small windows need pictures as large as the big ones.
+                let scale = 900 / max(window.frame.width, window.frame.height, 1)
                 configuration.width = Int(window.frame.width * scale * 2)
                 configuration.height = Int(window.frame.height * scale * 2)
                 configuration.showsCursor = false
@@ -207,7 +208,8 @@ final class WindowOverviewView: NSView {
         pictures = [:]
         icons = Dictionary(windows.map { ($0.pid, NSRunningApplication(processIdentifier: $0.pid)?.icon ?? NSImage()) },
                            uniquingKeysWith: { first, _ in first })
-        frames = OverviewLayout.frames(for: windows.map(\.frame.size), in: bounds.insetBy(dx: 40, dy: 50))
+        frames = OverviewLayout.frames(for: windows.map(\.frame.size), in: bounds.insetBy(dx: 40, dy: 50),
+                                       uniform: true)
         selection = windows.isEmpty ? nil : 0
         needsDisplay = true
     }

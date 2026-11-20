@@ -31,17 +31,25 @@ public struct OverviewWindow: Equatable {
 public enum OverviewLayout {
     /// Frames for windows of these sizes in `area`, row by row, each scaled down by the same factor as much
     /// as needed (never up), with `spacing` around them: the column count that leaves the windows largest.
+    /// With `uniform`, every window is fitted to its own cell instead, so they all look about the same
+    /// size (small ones enlarged too), as the user prefers.
     public static func frames(for sizes: [CGSize], in area: CGRect, spacing: CGFloat = 24,
-                              captionHeight: CGFloat = 24) -> [CGRect] {
+                              captionHeight: CGFloat = 24, uniform: Bool = false) -> [CGRect] {
         guard !sizes.isEmpty, area.width > 0, area.height > 0 else { return [] }
-        var best: (scale: CGFloat, columns: Int) = (0, 1)
+        var best: (score: CGFloat, columns: Int) = (0, 1)
         for columns in 1...sizes.count {
             let rows = (sizes.count + columns - 1) / columns
             let cell = CGSize(width: (area.width - CGFloat(columns + 1) * spacing) / CGFloat(columns),
                               height: (area.height - CGFloat(rows + 1) * spacing) / CGFloat(rows) - captionHeight)
             guard cell.width > 0, cell.height > 0 else { continue }
-            let scale = sizes.map { min(cell.width / $0.width, cell.height / $0.height, 1) }.min() ?? 0
-            if scale > best.scale { best = (scale, columns) }
+            // Uniform: the smallest window as drawn; otherwise the common scale.
+            let score = uniform
+                ? sizes.map { size -> CGFloat in
+                    let scale = min(cell.width / size.width, cell.height / size.height)
+                    return size.width * scale * size.height * scale
+                }.min() ?? 0
+                : sizes.map { min(cell.width / $0.width, cell.height / $0.height, 1) }.min() ?? 0
+            if score > best.score { best = (score, columns) }
         }
         let columns = best.columns
         let rows = (sizes.count + columns - 1) / columns
@@ -57,7 +65,8 @@ public enum OverviewLayout {
             let slot = CGRect(x: left + CGFloat(column) * (cell.width + spacing),
                               y: area.minY + spacing + CGFloat(row) * (cell.height + spacing),
                               width: cell.width, height: cell.height - captionHeight)
-            let scale = min(slot.width / size.width, slot.height / size.height, 1)
+            let fit = min(slot.width / size.width, slot.height / size.height)
+            let scale = uniform ? fit : min(fit, 1)
             let fitted = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
             return CGRect(x: (slot.midX - fitted.width / 2).rounded(), y: (slot.midY - fitted.height / 2).rounded(),
                           width: fitted.width, height: fitted.height)

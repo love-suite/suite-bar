@@ -187,17 +187,31 @@ final class AppSwitcher {
         panel.orderOut(nil)
     }
 
-    /// Activation from an app in the background may be refused; reopening the app, as a Dock click does,
-    /// is the fallback.
+    /// Brings an app forward from the ⌘Tab tap. Explorer isn't the active app and the key never reached
+    /// it, so macOS refuses an ordinary activation; Accessibility can make the app frontmost (as other
+    /// app switchers do), its front window raised. Activating, then reopening the app as a Dock click does,
+    /// are the fallbacks.
     static func bringForward(_ app: NSRunningApplication) {
         if app.processIdentifier == getpid() {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         if app.isHidden { app.unhide() }
+        if AXIsProcessTrusted() {
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.3)
+            AXUIElementSetAttributeValue(element, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+            var window: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXMainWindowAttribute as CFString, &window) == .success
+                || AXUIElementCopyAttributeValue(element, kAXFocusedWindowAttribute as CFString, &window) == .success,
+               let window, CFGetTypeID(window) == AXUIElementGetTypeID() {
+                AXUIElementPerformAction(window as! AXUIElement, kAXRaiseAction as CFString)
+            }
+        }
         app.activate(options: [.activateAllWindows])
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            guard NSWorkspace.shared.frontmostApplication != app, let url = app.bundleURL else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier,
+                  let url = app.bundleURL else { return }
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
             NSWorkspace.shared.openApplication(at: url, configuration: configuration)

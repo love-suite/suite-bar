@@ -26,6 +26,23 @@ import Testing
         #expect(frames.first?.size == CGSize(width: 200, height: 100))
     }
 
+    @Test func uniformWindowsAllFillTheirCells() {
+        let sizes = [CGSize(width: 1400, height: 900), CGSize(width: 300, height: 200), CGSize(width: 800, height: 500),
+                     CGSize(width: 600, height: 400)]
+        let frames = OverviewLayout.frames(for: sizes, in: area, uniform: true)
+        // Each one fills its cell, across or down: the small window is enlarged like the others.
+        let widest = frames.map(\.width).max() ?? 0
+        let tallest = frames.map(\.height).max() ?? 0
+        for frame in frames {
+            #expect(abs(frame.width - widest) <= 2 || abs(frame.height - tallest) <= 2)
+        }
+        #expect(frames[1].width > 300)
+        for i in frames.indices {
+            #expect(area.contains(frames[i]))
+            for j in frames.indices where j > i { #expect(!frames[i].intersects(frames[j])) }
+        }
+    }
+
     @Test func nothingToShowGivesNothing() {
         #expect(OverviewLayout.frames(for: [], in: area).isEmpty)
     }
