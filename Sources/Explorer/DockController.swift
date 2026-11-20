@@ -9,6 +9,7 @@ final class DockController {
     static let shared = DockController()
 
     private var panel: DockPanel?
+    private let cover = SystemDockCover()
     private let hider = DockController.makeHider()
     private let agent = DockController.makeAgent()
     private let fitter = WindowFitter()
@@ -47,6 +48,7 @@ final class DockController {
     /// Explorer quits: the system Dock comes back as it was.
     func stop() {
         panel?.orderOut(nil)
+        cover.orderOut(nil)
         setWatchingPointer(false)
         fitter.reserved = 0
         AppSwitcher.shared.isEnabled = false
@@ -88,6 +90,7 @@ final class DockController {
             setWatchingPointer(false)
             MinimizedWindows.shared.isEnabled = false
             panel?.orderOut(nil)
+            cover.orderOut(nil)
             fitter.reserved = 0
             AppSwitcher.shared.isEnabled = false
             MinimizedWindows.shared.parksWindows = false
@@ -191,6 +194,12 @@ final class DockController {
         }()
         let span = measured ?? estimated
         systemDockSpan = (span.lowerBound - 12)...(span.upperBound + 12)
+        // Mission Control always shows the system Dock, where it is hidden: covered there.
+        if systemDockEdge == .bottom, let systemDockSpan {
+            cover.cover(systemDockSpan, on: screen)
+        } else {
+            cover.orderOut(nil)
+        }
     }
 
     // MARK: Automatic hiding
@@ -369,7 +378,8 @@ final class DockPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 400, height: 64),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)))
+        // Above the cover over the hidden system Dock, itself just above the Dock's level.
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 2)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         isOpaque = false
         backgroundColor = .clear
@@ -411,5 +421,94 @@ final class DockBackground: NSView {
             NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
             return true
         }
+    }
+}
+
+/// A strip of the wallpaper over the hidden mini system Dock. Mission Control always shows the Dock, at the
+/// place it hides at; Mission Control can't be noticed from outside, but it keeps this window (a level above
+/// the Dock, stationary) on top, so the strip stays and hides the Dock there (tried with the user). Clicks go
+/// through it. Outside Mission Control it just shows the wallpaper it covers.
+final class SystemDockCover: NSPanel {
+    /// Tall enough for a Dock of one-point icons (a 16-point strip hid it entirely).
+    static let height: CGFloat = 16
+
+    private let wallpaper = WallpaperSlice()
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        super.init(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
+                   defer: false)
+        level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1)
+        collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        isOpaque = true
+        hasShadow = false
+        hidesOnDeactivate = false
+        ignoresMouseEvents = true
+        contentView = wallpaper
+        // Each Space may have its own wallpaper.
+        let workspace = NSWorkspace.shared.notificationCenter
+        observers.append(workspace.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil,
+                                               queue: .main) { [weak self] _ in self?.wallpaper.reload() })
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.wallpaper.reload()
+        })
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    func cover(_ span: ClosedRange<CGFloat>, on screen: NSScreen) {
+        let frame = NSRect(x: span.lowerBound, y: screen.frame.minY, width: span.upperBound - span.lowerBound,
+                           height: Self.height).intersection(screen.frame)
+        guard !frame.isEmpty else { return orderOut(nil) }
+        wallpaper.screen = screen
+        if self.frame != frame {
+            setFrame(frame, display: false)
+            wallpaper.reload()
+        }
+        orderFrontRegardless()
+    }
+}
+
+/// The part of the screen's wallpaper behind a window, drawn as macOS draws the wallpaper (filling or
+/// fitting the screen).
+final class WallpaperSlice: NSView {
+    weak var screen: NSScreen?
+    private var image: NSImage?
+    private var fills = true
+    private var fillColor: NSColor = .black
+
+    func reload() {
+        guard let screen = screen ?? window?.screen else { return }
+        // A plain colour isn't reported by NSWorkspace, which gives a default picture instead.
+        if let data = try? Data(contentsOf: WallpaperColor.storeURL),
+           let color = WallpaperColor.color(fromStore: data) {
+            image = nil
+            fillColor = NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: 1)
+            needsDisplay = true
+            return
+        }
+        let workspace = NSWorkspace.shared
+        image = workspace.desktopImageURL(for: screen).flatMap(NSImage.init(contentsOf:))
+        let options = workspace.desktopImageOptions(for: screen) ?? [:]
+        let scaling = (options[.imageScaling] as? NSNumber).flatMap { NSImageScaling(rawValue: $0.uintValue) }
+        fills = scaling == nil || ((options[.allowClipping] as? NSNumber)?.boolValue ?? true)
+        fillColor = options[.fillColor] as? NSColor ?? .black
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        fillColor.setFill()
+        bounds.fill()
+        guard let image, let window, let screen = screen ?? window.screen, image.size.width > 0 else { return }
+        // The whole wallpaper as laid on the screen, then shifted so that this window shows its own part.
+        let screenFrame = screen.frame
+        let scale = fills ? max(screenFrame.width / image.size.width, screenFrame.height / image.size.height)
+                          : min(screenFrame.width / image.size.width, screenFrame.height / image.size.height)
+        let size = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        let onScreen = NSRect(x: screenFrame.midX - size.width / 2, y: screenFrame.midY - size.height / 2,
+                              width: size.width, height: size.height)
+        let inView = onScreen.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
+        image.draw(in: inView, from: .zero, operation: .copy, fraction: 1)
     }
 }

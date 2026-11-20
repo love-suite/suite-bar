@@ -550,3 +550,32 @@ private final class FakeDock: PreferenceDomain {
         #expect(fake.commands.count == 2)
     }
 }
+
+@Suite struct WallpaperColorTests {
+    func store(provider: String, configuration: [String: Any]) throws -> Data {
+        let blob = try PropertyListSerialization.data(fromPropertyList: configuration, format: .binary, options: 0)
+        let store: [String: Any] = ["AllSpacesAndDisplays": ["Linked": ["Content": ["Choices": [
+            ["Provider": provider, "Configuration": blob, "Files": []]]]]]]
+        return try PropertyListSerialization.data(fromPropertyList: store, format: .binary, options: 0)
+    }
+
+    @Test func aSystemColourIsRead() throws {
+        let data = try store(provider: "com.apple.wallpaper.choice.color",
+                             configuration: ["type": "systemColor", "systemColor": ["black": [String: Any]()]])
+        let color = WallpaperColor.color(fromStore: data)
+        #expect(color?.red == 0 && color?.green == 0 && color?.blue == 0)
+    }
+
+    @Test func aColourOfTheUsersOwnIsRead() throws {
+        let data = try store(provider: "com.apple.wallpaper.choice.color",
+                             configuration: ["type": "custom", "custom": ["red": 0.2, "green": 0.4, "blue": 0.6]])
+        let color = WallpaperColor.color(fromStore: data)
+        #expect(color?.red == 0.2 && color?.green == 0.4 && color?.blue == 0.6)
+    }
+
+    @Test func picturesAndOddFilesGiveNoColour() throws {
+        let picture = try store(provider: "com.apple.wallpaper.choice.image", configuration: ["type": "image"])
+        #expect(WallpaperColor.color(fromStore: picture) == nil)
+        #expect(WallpaperColor.color(fromStore: Data("nonsense".utf8)) == nil)
+    }
+}

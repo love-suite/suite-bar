@@ -559,3 +559,49 @@ public final class SystemDockAgent {
         memory.removeObject(forKey: Self.stoppedKey)
     }
 }
+
+// MARK: The wallpaper
+
+/// The wallpaper when it is a plain colour. macOS keeps that choice in its wallpaper store
+/// (`~/Library/Application Support/com.apple.wallpaper/Store/Index.plist`), and NSWorkspace then reports
+/// a default picture instead; read only, and nil whenever the file isn't as expected.
+public enum WallpaperColor {
+    public static var storeURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/com.apple.wallpaper/Store/Index.plist")
+    }
+
+    /// Red, green and blue from 0 to 1.
+    public static func color(fromStore data: Data) -> (red: Double, green: Double, blue: Double)? {
+        guard let store = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let linked = (store["AllSpacesAndDisplays"] as? [String: Any])?["Linked"] as? [String: Any],
+              let choice = ((linked["Content"] as? [String: Any])?["Choices"] as? [[String: Any]])?.first,
+              (choice["Provider"] as? String) == "com.apple.wallpaper.choice.color",
+              let blob = choice["Configuration"] as? Data,
+              let configuration = try? PropertyListSerialization.propertyList(from: blob, format: nil) as? [String: Any]
+        else { return nil }
+        if let named = (configuration["systemColor"] as? [String: Any])?.keys.first {
+            return systemColors[named]
+        }
+        // A colour of the user's own: look for its components wherever they are.
+        return components(in: configuration)
+    }
+
+    static let systemColors: [String: (red: Double, green: Double, blue: Double)] = [
+        "black": (0, 0, 0), "white": (1, 1, 1),
+    ]
+
+    private static func components(in value: Any) -> (red: Double, green: Double, blue: Double)? {
+        if let dictionary = value as? [String: Any] {
+            if let red = (dictionary["red"] as? NSNumber)?.doubleValue,
+               let green = (dictionary["green"] as? NSNumber)?.doubleValue,
+               let blue = (dictionary["blue"] as? NSNumber)?.doubleValue {
+                return (red, green, blue)
+            }
+            for nested in dictionary.values {
+                if let found = components(in: nested) { return found }
+            }
+        }
+        return nil
+    }
+}
