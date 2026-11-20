@@ -452,9 +452,11 @@ public final class SystemDockHider {
         ("autohide-delay", 1000.0),
         // Seconds the sliding in would take, should the Dock still decide to show (pushing at the edge).
         ("autohide-time-modifier", 1000.0),
-        // Out of the way on the left edge, with the smallest icons and the running apps only, so the
-        // stretch of edge where it wakes up is as short as can be, and the bottom edge is ours.
-        ("tilesize", 16.0),
+        // Out of the way on the left edge, with the running apps only and icons of a single point (the
+        // preferences take 1, below System Settings' 16: tested on macOS 27), so it is a sliver even in
+        // Mission Control, the stretch of edge where it wakes up is as short as can be, and the bottom
+        // edge is ours.
+        ("tilesize", 1.0),
         ("orientation", "left"),
         ("static-only", true),
     ]

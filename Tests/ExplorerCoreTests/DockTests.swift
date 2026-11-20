@@ -421,7 +421,7 @@ private final class FakeDock: PreferenceDomain {
         #expect(dock.values["autohide"] as? Bool == true)
         #expect(dock.values["autohide-delay"] as? Double == 1000)
         #expect(dock.values["autohide-time-modifier"] as? Double == 1000)
-        #expect(dock.values["tilesize"] as? Double == 16)
+        #expect(dock.values["tilesize"] as? Double == 1)
         #expect(dock.values["orientation"] as? String == "left")
         #expect(dock.values["static-only"] as? Bool == true)
         #expect(restarts == 1)
