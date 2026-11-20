@@ -92,6 +92,22 @@ final class AppSwitcher {
             let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
             let flags = event.flags
             let shift = flags.contains(.maskShift)
+            // Mission Control's keys: ⌃↑ (all windows), ⌃↓ (the front app's), the Mission Control key.
+            let controlOnly = flags.contains(.maskControl) && !flags.contains(.maskCommand)
+                && !flags.contains(.maskAlternate) && !flags.contains(.maskShift)
+            if state == nil, keyCode == Self.missionControlKey || (controlOnly && keyCode == 126) {
+                WindowOverview.shared.toggle()
+                return nil
+            }
+            if state == nil, controlOnly, keyCode == 125 {
+                WindowOverview.shared.toggle(onlyApp: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+                return nil
+            }
+            if WindowOverview.shared.isShown {
+                // The overview takes every key while it is open.
+                _ = WindowOverview.shared.handleKey(keyCode)
+                return nil
+            }
             if state == nil, Self.isMinimizeKey(event) {
                 // ⌘M does nothing without the system Dock; Explorer minimizes instead.
                 MinimizedWindows.shared.parkFrontWindow()
@@ -111,7 +127,7 @@ final class AppSwitcher {
             }
             return nil
         case .keyUp:
-            return state == nil ? pass : nil
+            return state == nil && !WindowOverview.shared.isShown ? pass : nil
         case .flagsChanged:
             if state != nil, !event.flags.contains(.maskCommand) { commit() }
             return pass
@@ -119,6 +135,9 @@ final class AppSwitcher {
             return pass
         }
     }
+
+    /// The Mission Control key (F3 on Apple keyboards).
+    private static let missionControlKey: UInt16 = 160
 
     /// ⌘M alone, whatever the keyboard layout (the character typed, not the key's place).
     private static func isMinimizeKey(_ event: CGEvent) -> Bool {

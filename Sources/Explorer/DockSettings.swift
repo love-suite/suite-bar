@@ -76,11 +76,21 @@ struct DockSettingsView: View {
                 }
                 VStack(alignment: .leading, spacing: 4) {
                     Toggle("Stop the system Dock (experimental)", isOn: dock(\.stopsSystemDock))
-                    DockNote("Rather than hiding it, so the whole bottom edge is free. Explorer then does ⌘Tab "
-                             + "(with the Accessibility permission above); Mission Control, Spaces and full screen "
-                             + "stop for now. The system Dock starts again when you turn this off, go back to the "
-                             + "System Dock, switch to Finder, quit Explorer or log out.")
+                    DockNote("Rather than hiding it, so the whole bottom edge is free. Explorer then does ⌘Tab, "
+                             + "⌘M and Mission Control (⌃↑, ⌃↓), with the Accessibility permission above; Spaces and "
+                             + "full screen stop for now. The system Dock starts again when you turn this off, go "
+                             + "back to the System Dock, switch to Finder, quit Explorer or log out.")
                 }
+                HStack {
+                    Text("Pictures of the windows in Mission Control")
+                    Spacer()
+                    if WindowOverview.canTakePictures {
+                        Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+                    } else {
+                        Button("Allow…") { WindowOverview.askForPictures() }
+                    }
+                }
+                .disabled(!options.stopsSystemDock)
             }
             .disabled(!options.isShown)
         }
