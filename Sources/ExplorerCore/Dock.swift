@@ -452,12 +452,12 @@ public final class SystemDockHider {
         ("autohide-delay", 1000.0),
         // Seconds the sliding in would take, should the Dock still decide to show (pushing at the edge).
         ("autohide-time-modifier", 1000.0),
-        // Out of the way on the left edge, with the running apps only and icons of a single point (the
-        // preferences take 1, below System Settings' 16: tested on macOS 27), so it is a sliver even in
-        // Mission Control, the stretch of edge where it wakes up is as short as can be, and the bottom
-        // edge is ours.
+        // At the bottom, where windows minimize to (the animation follows the hidden Dock), with the
+        // running apps only and icons of a single point (the preferences take 1, below System Settings'
+        // 16: tested on macOS 27), so it is a sliver even in Mission Control and the stretch of the bottom
+        // edge where it wakes up is as short as can be.
         ("tilesize", 1.0),
-        ("orientation", "left"),
+        ("orientation", "bottom"),
         ("static-only", true),
     ]
     private static let savedKey = "SystemDockSettingsBeforeHiding"

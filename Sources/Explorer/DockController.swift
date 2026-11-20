@@ -19,7 +19,7 @@ final class DockController {
     private var isRevealed = true
     private var pending: DispatchWorkItem?
     /// Where the hidden system Dock wakes up: its edge, and the stretch along it.
-    private var systemDockEdge: ScreenEdge = .left
+    private var systemDockEdge: ScreenEdge = .bottom
     private var systemDockSpan: ClosedRange<CGFloat>?
 
     private var options: DockOptions { DockSettings.shared.options }
@@ -150,8 +150,9 @@ final class DockController {
     }
 
     /// macOS 27 ignores the long `autohide-delay`: on the outermost pixels of its edge the hidden system
-    /// Dock wakes up and shows its icons' names. Along its short stretch of that edge (the middle of the left
-    /// edge), the pointer is put back a few points in, too little to be noticed; a screen beyond is reached.
+    /// Dock wakes up and shows its icons' names. Along its short stretch of that edge (the middle of the
+    /// bottom edge, with icons of a point), the pointer is put back a few points in, too little to be
+    /// noticed; a screen beyond is reached.
     private func keepOffSystemDockEdge(_ point: NSPoint, screen: NSScreen) {
         // A stopped Dock can't wake up: its edge is free.
         guard !agent.isStopped else { return }
@@ -209,7 +210,8 @@ final class DockController {
         keepOffSystemDockEdge(point, screen: screen)
         guard options.autohides else { return }
         if !isRevealed {
-            let atEdge = point.y <= screen.frame.minY + 2
+            // The edge guard may have put the pointer back a few points up.
+            let atEdge = point.y <= screen.frame.minY + EdgeGuard.gap + 1
                 && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
             atEdge ? schedule(0.12) { [weak self] in self?.reveal() } : cancelPending()
         } else {

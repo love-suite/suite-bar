@@ -422,7 +422,7 @@ private final class FakeDock: PreferenceDomain {
         #expect(dock.values["autohide-delay"] as? Double == 1000)
         #expect(dock.values["autohide-time-modifier"] as? Double == 1000)
         #expect(dock.values["tilesize"] as? Double == 1)
-        #expect(dock.values["orientation"] as? String == "left")
+        #expect(dock.values["orientation"] as? String == "bottom")
         #expect(dock.values["static-only"] as? Bool == true)
         #expect(restarts == 1)
         #expect(hider.isHiding)
@@ -430,7 +430,7 @@ private final class FakeDock: PreferenceDomain {
 
     @Test func restoringPutsBackTheValuesFoundBefore() {
         let dock = FakeDock(["autohide": false, "autohide-time-modifier": 0.2, "tilesize": 36,
-                             "orientation": "bottom"])
+                             "orientation": "left"])
         var restarts = 0
         let hider = SystemDockHider(dock: dock, memory: freshDefaults(), restartDock: { restarts += 1 })
         hider.hide()
@@ -438,7 +438,7 @@ private final class FakeDock: PreferenceDomain {
         #expect(dock.values["autohide"] as? Bool == false)
         #expect(dock.values["autohide-time-modifier"] as? Double == 0.2)
         #expect(dock.values["tilesize"] as? Int == 36)
-        #expect(dock.values["orientation"] as? String == "bottom")
+        #expect(dock.values["orientation"] as? String == "left")
         #expect(dock.values["static-only"] == nil)
         // The delay wasn't set before, so it is removed rather than set to a value of ours.
         #expect(dock.values["autohide-delay"] == nil)
