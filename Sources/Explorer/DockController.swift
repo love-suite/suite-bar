@@ -79,7 +79,7 @@ final class DockController {
             MinimizedWindows.shared.isEnabled = true
             // Hidden either way, should it be started again by something else (a log out, say).
             hider.hide()
-            if options.stopsSystemDock { agent.stop() } else { agent.start() }
+            if options.stopsSystemDock { stopSystemDock() } else { agent.start() }
             // What stopped with the system Dock, Explorer does instead.
             AppSwitcher.shared.isEnabled = agent.isStopped
             MinimizedWindows.shared.parksWindows = agent.isStopped
@@ -255,6 +255,40 @@ final class DockController {
         }, completionHandler: { [weak self] in
             if self?.isRevealed == false { panel.orderOut(nil) }
         })
+    }
+
+    /// Windows in full screen live in Spaces of their own, which only the system Dock can switch to: they
+    /// are taken out of full screen first, then the Dock is stopped once they are back on the desktop.
+    private func stopSystemDock() {
+        guard !agent.isStopped else { return }
+        guard Self.leaveFullScreen() else { return agent.stop() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self, self.isActive, self.options.stopsSystemDock else { return }
+            self.agent.stop()
+            self.apply()
+        }
+    }
+
+    /// Takes every other app's full screen windows out of full screen; true if there were any.
+    private static func leaveFullScreen() -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        var found = false
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && app.processIdentifier != getpid() {
+            let element = AXUIElementCreateApplication(app.processIdentifier)
+            AXUIElementSetMessagingTimeout(element, 0.3)
+            var windows: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &windows) == .success,
+                  let windows = windows as? [AXUIElement] else { continue }
+            for window in windows {
+                var value: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value) == .success,
+                      (value as? Bool) == true else { continue }
+                AXUIElementSetAttributeValue(window, "AXFullScreen" as CFString, kCFBooleanFalse)
+                found = true
+            }
+        }
+        return found
     }
 
     private static func makeAgent() -> SystemDockAgent {
