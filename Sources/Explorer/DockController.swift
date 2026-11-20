@@ -194,9 +194,10 @@ final class DockController {
         }()
         let span = measured ?? estimated
         systemDockSpan = (span.lowerBound - 12)...(span.upperBound + 12)
-        // Mission Control always shows the system Dock, where it is hidden: covered there.
-        if systemDockEdge == .bottom, let systemDockSpan {
-            cover.cover(systemDockSpan, on: screen)
+        // Mission Control always shows the system Dock, where it is hidden: covered there, with a few
+        // points spare.
+        if systemDockEdge == .bottom {
+            cover.cover((span.lowerBound - 4)...(span.upperBound + 4), on: screen)
         } else {
             cover.orderOut(nil)
         }

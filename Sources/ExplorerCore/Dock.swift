@@ -371,8 +371,9 @@ public enum SystemDockSpan {
     /// x for the bottom, y for the sides.
     public static func estimate(itemCount: Int, tileSize: CGFloat, screen: CGRect,
                                 edge: ScreenEdge = .bottom) -> ClosedRange<CGFloat> {
-        // Each tile is a little longer than its icon; two separators; generous ends.
-        let length = CGFloat(itemCount) * (tileSize + 8) + 2 * 16 + 2 * 24
+        // Each tile is a little longer than its icon, then two separators and the ends: with one-point
+        // icons and five tiles that is 32 points, against 26 on a screenshot of the user's.
+        let length = CGFloat(itemCount) * (tileSize * 1.2 + 3) + 2 * (tileSize * 0.3 + 3) + 2 * (tileSize * 0.2 + 2)
         let (middle, available) = edge == .bottom ? (screen.midX, screen.width) : (screen.midY, screen.height)
         let half = min(length, available) / 2
         return (middle - half)...(middle + half)

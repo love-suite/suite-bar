@@ -367,11 +367,13 @@ private func freshDefaults() -> UserDefaults {
     }
 
     @Test func theSystemDockSpanIsCentredAndCounted() {
-        // 10 tiles of 24, two separators of 16, two ends of 24: 320 long.
+        // 10 tiles of 22.2, two separators of 7.8, two ends of 5.2: 248 long.
         #expect(SystemDockSpan.estimate(itemCount: 10, tileSize: 16, screen: screen)
-                == CGFloat(575)...CGFloat(895))
+                == CGFloat(611)...CGFloat(859))
         #expect(SystemDockSpan.estimate(itemCount: 10, tileSize: 16, screen: screen, edge: .left)
-                == CGFloat(318)...CGFloat(638))
+                == CGFloat(354)...CGFloat(602))
+        // The hidden mini Dock: one-point icons, five tiles.
+        #expect(SystemDockSpan.estimate(itemCount: 5, tileSize: 1, screen: screen) == CGFloat(719)...CGFloat(751))
         #expect(SystemDockSpan.estimate(itemCount: 500, tileSize: 16, screen: screen) == 0...1470)
         let dock = FakeDock(["persistent-apps": [1, 2, 3], "persistent-others": [1], "recent-apps": [1, 2]])
         #expect(SystemDockSpan.itemCount(preferences: dock, running: 6, unpinnedRunning: 4) == 2 + 3 + 1 + 2 + 4)
