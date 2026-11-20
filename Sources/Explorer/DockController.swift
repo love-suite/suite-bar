@@ -429,8 +429,9 @@ final class DockBackground: NSView {
 /// the Dock, stationary) on top, so the strip stays and hides the Dock there (tried with the user). Clicks go
 /// through it. Outside Mission Control it just shows the wallpaper it covers.
 final class SystemDockCover: NSPanel {
-    /// Tall enough for a Dock of one-point icons (a 16-point strip hid it entirely).
-    static let height: CGFloat = 16
+    /// Tall enough for a Dock of one-point icons: shown fixed, it spans from 3 to 18 points above the
+    /// bottom and 26 points across (measured on a screenshot of the user's), with room for its shadow.
+    static let height: CGFloat = 24
 
     private let wallpaper = WallpaperSlice()
     private var observers: [NSObjectProtocol] = []
