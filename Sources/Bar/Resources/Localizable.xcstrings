@@ -1,6 +1,46 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%d More in Explorer": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d de plus dans Explorer"
+          }
+        }
+      }
+    },
+    "%d items": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%d éléments"
+          }
+        }
+      }
+    },
+    "1 item": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "1 élément"
+          }
+        }
+      }
+    },
+    "Back": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retour"
+          }
+        }
+      }
+    },
     "Bar Settings": {
       "localizations": {
         "fr": {
@@ -31,6 +71,16 @@
         }
       }
     },
+    "Display as": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher comme"
+          }
+        }
+      }
+    },
     "Do this for all conflicts": {
       "localizations": {
         "fr": {
@@ -51,12 +101,82 @@
         }
       }
     },
+    "Eject": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Éjecter"
+          }
+        }
+      }
+    },
     "Empty Trash": {
       "localizations": {
         "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Vider la corbeille"
+          }
+        }
+      }
+    },
+    "Explorer isn't allowed to control System Events. Allow it in System Settings › Privacy & Security › Automation.": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Explorer n’a pas le droit de contrôler System Events. Autorisez-le dans Réglages Système › Confidentialité et sécurité › Automatisation."
+          }
+        }
+      }
+    },
+    "Force Quit": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forcer à quitter"
+          }
+        }
+      }
+    },
+    "Force Quit %@": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forcer %@ à quitter"
+          }
+        }
+      }
+    },
+    "Hide": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer"
+          }
+        }
+      }
+    },
+    "Hide Others": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer les autres"
+          }
+        }
+      }
+    },
+    "It may have been moved or deleted.": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il a peut-être été déplacé ou supprimé."
           }
         }
       }
@@ -91,12 +211,32 @@
         }
       }
     },
+    "Minimized": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réduite"
+          }
+        }
+      }
+    },
     "New Explorer Window": {
       "localizations": {
         "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Nouvelle fenêtre Explorer"
+          }
+        }
+      }
+    },
+    "No items": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucun élément"
           }
         }
       }
@@ -111,12 +251,52 @@
         }
       }
     },
+    "Open at Login": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir à la connexion"
+          }
+        }
+      }
+    },
     "Open in Explorer": {
       "localizations": {
         "fr": {
           "stringUnit": {
             "state": "translated",
             "value": "Ouvrir dans Explorer"
+          }
+        }
+      }
+    },
+    "Open “%@”": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir « %@ »"
+          }
+        }
+      }
+    },
+    "Options": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Options"
+          }
+        }
+      }
+    },
+    "Position on Screen": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Position à l’écran"
           }
         }
       }
@@ -181,6 +361,36 @@
         }
       }
     },
+    "Restart": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redémarrer"
+          }
+        }
+      }
+    },
+    "Show": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher"
+          }
+        }
+      }
+    },
+    "Show All Windows": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher toutes les fenêtres"
+          }
+        }
+      }
+    },
     "Show in Explorer": {
       "localizations": {
         "fr": {
@@ -201,6 +411,16 @@
         }
       }
     },
+    "Sort by": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trier par"
+          }
+        }
+      }
+    },
     "The destination already has an item named “%@”.": {
       "localizations": {
         "fr": {
@@ -217,6 +437,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "Corbeille"
+          }
+        }
+      }
+    },
+    "Turn Hiding Off": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactiver le masquage"
+          }
+        }
+      }
+    },
+    "Turn Hiding On": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer le masquage"
+          }
+        }
+      }
+    },
+    "Turn Magnification Off": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Désactiver l’agrandissement"
+          }
+        }
+      }
+    },
+    "Turn Magnification On": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer l’agrandissement"
+          }
+        }
+      }
+    },
+    "View content as": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Présenter le contenu comme"
           }
         }
       }

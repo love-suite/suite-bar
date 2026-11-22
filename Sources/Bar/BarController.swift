@@ -32,6 +32,11 @@ final class BarController {
     private var inFullScreen = false
     private let edgeProbe = BarEdgeProbe()
 
+    /// The screen the Dock moved to, when it follows the pointer; the main screen otherwise.
+    private var dockDisplay: CGDirectDisplayID?
+    /// Another screen whose Dock edge the pointer pushes against, and since when.
+    private var pushedScreen: (display: CGDirectDisplayID, since: Date)?
+
     private var options: BarSettings { BarSettings.current }
     /// Whether the Dock hides automatically now: by default, or as the app in front and full screen say.
     private var autohides: Bool {
@@ -97,11 +102,15 @@ final class BarController {
         if isActive {
             if panel == nil {
                 let panel = BarPanel()
-                panel.barView.onSizeChange = { [weak self] in self?.place() }
+                panel.barView.onSizeChange = { [weak self] in
+                    self?.place()
+                    panel.contentView?.needsLayout = true
+                }
                 self.panel = panel
             }
             setWatchingPointer(true)
-            panel?.barView.geometry = options.geometry
+            panel?.barView.options = options
+            BarBadges.shared.isEnabled = true
             updateHiding()
             place()
             MinimizedWindows.shared.isEnabled = true
@@ -117,6 +126,7 @@ final class BarController {
             appliedAutohides = nil
             setWatchingPointer(false)
             MinimizedWindows.shared.isEnabled = false
+            BarBadges.shared.isEnabled = false
             panel?.orderOut(nil)
             fitter.reserved = 0
             hider.restore()
@@ -131,32 +141,110 @@ final class BarController {
         }
     }
 
+    /// The main screen, where the hidden system Dock is.
     private var screen: NSScreen? { NSScreen.screens.first }
 
-    /// Centred at the bottom of the main screen, above the system Dock should that one show.
-    private var shownFrame: NSRect? {
-        guard let panel, let screen else { return nil }
-        let size = panel.barView.barSize
-        // Low enough to cover the hidden mini system Dock (3 to 18 points up), which Mission Control shows.
-        let bottom = screen.frame.minY + 2
-        return NSRect(x: (screen.frame.midX - size.width / 2).rounded(), y: bottom,
-                      width: size.width, height: size.height)
+    /// The screen our Dock is on.
+    private var dockScreen: NSScreen? {
+        guard options.display == .withPointer, let dockDisplay else { return screen }
+        return NSScreen.screens.first { $0.displayID == dockDisplay } ?? screen
     }
 
-    /// Just below the screen's bottom edge.
+    private var edge: ScreenEdge { ScreenEdge(options.position) }
+
+    /// Centred along its edge of the Dock's screen. At the bottom, low enough to cover the hidden mini
+    /// system Dock (3 to 18 points up), which Mission Control shows. The panel is larger than the bar,
+    /// with room for bouncing and magnified icons (transparent: clicks there go through).
+    private var shownFrame: NSRect? {
+        guard let panel, let screen = dockScreen else { return nil }
+        panel.barView.fittingLength = (edge == .bottom ? screen.frame.width : screen.visibleFrame.height) - 8
+        let size = panel.barView.panelSize
+        let bar = panel.barView.restBarRect
+        let origin: NSPoint
+        switch edge {
+        case .bottom:
+            origin = NSPoint(x: (screen.frame.midX - bar.midX).rounded(), y: screen.frame.minY + 2)
+        case .left:
+            origin = NSPoint(x: screen.frame.minX + 2, y: (screen.visibleFrame.midY - bar.midY).rounded())
+        case .right:
+            origin = NSPoint(x: screen.frame.maxX - 2 - size.width, y: (screen.visibleFrame.midY - bar.midY).rounded())
+        }
+        return NSRect(origin: origin, size: size)
+    }
+
+    /// The bar itself in the panel at `panelFrame`, on screen.
+    private func bar(in panelFrame: NSRect) -> NSRect {
+        (panel?.barView.restBarRect ?? NSRect(origin: .zero, size: panelFrame.size))
+            .offsetBy(dx: panelFrame.minX, dy: panelFrame.minY)
+    }
+
+    /// The bar just past the screen's edge.
     private var hiddenFrame: NSRect? {
-        guard let shown = shownFrame, let screen else { return nil }
-        return shown.offsetBy(dx: 0, dy: screen.frame.minY - shown.maxY - 2)
+        guard let shown = shownFrame, let screen = dockScreen else { return nil }
+        let bar = bar(in: shown)
+        switch edge {
+        case .bottom: return shown.offsetBy(dx: 0, dy: screen.frame.minY - bar.maxY - 2)
+        case .left: return shown.offsetBy(dx: screen.frame.minX - bar.maxX - 2, dy: 0)
+        case .right: return shown.offsetBy(dx: screen.frame.maxX - bar.minX + 2, dy: 0)
+        }
     }
 
     private func place() {
-        guard isActive, let panel, let shown = shownFrame, let screen else { return }
+        guard isActive, let panel, let shown = shownFrame, let screen = dockScreen else { return }
         if isRevealed {
             if panel.frame != shown { panel.setFrame(shown, display: true) }
             panel.orderFrontRegardless()
         }
-        // Windows are kept above the Dock only while it stays on screen, as with the system Dock.
-        fitter.reserved = appliedAutohides ?? options.autohides ? 0 : shown.maxY + 2 - screen.frame.minY
+        // Windows are kept clear of the Dock only while it stays on screen, as with the system Dock.
+        let bar = bar(in: shown)
+        let depth: CGFloat
+        switch edge {
+        case .bottom: depth = bar.maxY + 2 - screen.frame.minY
+        case .left: depth = bar.maxX + 2 - screen.frame.minX
+        case .right: depth = screen.frame.maxX - bar.minX + 2
+        }
+        fitter.edge = edge
+        fitter.screen = screen
+        fitter.reserved = appliedAutohides ?? options.autohides ? 0 : depth
+    }
+
+    /// Whether `point` is at the Dock's edge of `screen`, within `span` along it (or anywhere along it).
+    private func isAtDockEdge(_ point: NSPoint, of screen: NSScreen, along span: NSRect? = nil) -> Bool {
+        let frame = screen.frame
+        switch edge {
+        case .bottom:
+            return point.y <= frame.minY + EdgeGuard.gap + 1 && point.x >= frame.minX && point.x < frame.maxX
+                && span.map { point.x >= $0.minX - 20 && point.x <= $0.maxX + 20 } ?? true
+        case .left:
+            return point.x <= frame.minX + 1 && point.y >= frame.minY && point.y < frame.maxY
+                && span.map { point.y >= $0.minY - 20 && point.y <= $0.maxY + 20 } ?? true
+        case .right:
+            return point.x >= frame.maxX - 2 && point.y >= frame.minY && point.y < frame.maxY
+                && span.map { point.y >= $0.minY - 20 && point.y <= $0.maxY + 20 } ?? true
+        }
+    }
+
+    /// As the system Dock: pushing the pointer against another screen's Dock edge for a moment brings
+    /// the Dock there.
+    private func followPointer(_ point: NSPoint) {
+        guard options.display == .withPointer, NSScreen.screens.count > 1,
+              let current = dockScreen,
+              let other = NSScreen.screens.first(where: { $0 != current && isAtDockEdge(point, of: $0) }),
+              let display = other.displayID
+        else {
+            pushedScreen = nil
+            return
+        }
+        guard let pushed = pushedScreen, pushed.display == display else {
+            pushedScreen = (display, Date())
+            return
+        }
+        guard Date().timeIntervalSince(pushed.since) > 0.35 else { return }
+        pushedScreen = nil
+        dockDisplay = display
+        panel?.orderOut(nil)
+        isRevealed = true
+        place()
     }
 
     // MARK: The pointer at the system Dock's edge
@@ -166,9 +254,8 @@ final class BarController {
     private func setWatchingPointer(_ watching: Bool) {
         if watching, mouseMonitors.isEmpty {
             edgeProbe.start(atEdge: { [weak self] point in
-                guard let self, let screen, let shown = shownFrame else { return false }
-                return point.y <= screen.frame.minY + EdgeGuard.gap + 1
-                    && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
+                guard let self, let dockScreen, let shown = shownFrame else { return false }
+                return isAtDockEdge(point, of: dockScreen, along: bar(in: shown))
             }, describe: { [weak self] in
                 guard let self else { return "" }
                 let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?"
@@ -249,8 +336,11 @@ final class BarController {
             return FullScreenSpace.Window(ownerPID: pid, layer: info[kCGWindowLayer as String] as? Int ?? 0,
                                           bounds: bounds)
         }
-        let full = FullScreenSpace.isActive(windows: windows, screen: screen.frame.size,
-                                            frontmost: NSWorkspace.shared.frontmostApplication?.processIdentifier)
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        // Below a notch, a full-screen window has a maximized window's frame: the app is asked first.
+        let full = frontmost.flatMap(FullScreenWindow.isInFront)
+            ?? FullScreenSpace.isActive(windows: windows, screen: screen.frame.size,
+                                        frontmost: frontmost?.processIdentifier)
         inFullScreen = full
         updateHiding()
     }
@@ -278,11 +368,12 @@ final class BarController {
     }
 
     /// Mission Control has no notification; its Spaces bar is looked for among the windows on screen, five
-    /// times a second (a cheap call), only while our Dock hides itself.
+    /// times a second (a cheap call), only while our Dock hides itself. The pointer is looked at then too.
     private func watchMissionControl(_ watching: Bool) {
         if watching, missionControlTimer == nil {
             missionControlTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
                 self?.checkMissionControl()
+                self?.pollPointer()
             }
         } else if !watching {
             missionControlTimer?.invalidate()
@@ -316,21 +407,36 @@ final class BarController {
     }
 
     private func pointerMoved() {
-        guard let panel, let shown = shownFrame, let screen else { return }
+        guard let panel, let shownPanel = shownFrame, let screen, let dockScreen else { return }
+        let shown = bar(in: shownPanel)
         let point = NSEvent.mouseLocation
         keepOffSystemDockEdge(point, screen: screen)
+        followPointer(point)
+        if isRevealed { panel.barView.pointerMoved(to: point) }
         guard appliedAutohides == true else { return }
         if !isRevealed {
             // The edge guard may have put the pointer back a few points up.
-            let atEdge = point.y <= screen.frame.minY + EdgeGuard.gap + 1
-                && point.x >= shown.minX - 20 && point.x <= shown.maxX + 20
-            atEdge ? schedule(0.12) { [weak self] in self?.reveal() } : cancelPending()
+            isAtDockEdge(point, of: dockScreen, along: shown)
+                ? schedule(0.12) { [weak self] in self?.reveal() } : cancelPending()
         } else {
-            let near = shown.insetBy(dx: -8, dy: -8).union(NSRect(x: shown.minX, y: screen.frame.minY,
-                                                                  width: shown.width, height: 1)).contains(point)
+            let near = shown.insetBy(dx: -8, dy: -8).contains(point)
+                || isAtDockEdge(point, of: dockScreen, along: shown)
+                || panel.barView.drawnBarRect.offsetBy(dx: panel.frame.minX, dy: panel.frame.minY)
+                    .insetBy(dx: -8, dy: -8).contains(point)
             near || panel.barView.isBusy || inMissionControl
                 ? cancelPending() : schedule(0.35) { [weak self] in self?.conceal() }
         }
+    }
+
+    /// Mouse monitors aren't always told of the pointer reaching the edge (over some full-screen apps):
+    /// while the Dock hides itself, the pointer is also looked at five times a second.
+    private func pollPointer() {
+        guard appliedAutohides == true, !isRevealed, pending == nil, let dockScreen, let shownPanel = shownFrame
+        else { return }
+        let point = NSEvent.mouseLocation
+        guard isAtDockEdge(point, of: dockScreen, along: bar(in: shownPanel)) else { return }
+        edgeProbe.pointerCheckCaught(point)
+        pointerMoved()
     }
 
     private func schedule(_ delay: TimeInterval, _ action: @escaping () -> Void) {
@@ -421,6 +527,29 @@ enum DockMeasure {
     }
 }
 
+/// Whether the app in front shows its window in full screen, through Accessibility (`AXFullScreen`); nil
+/// without the permission or an answer, when the window list has to do.
+enum FullScreenWindow {
+    static func isInFront(of app: NSRunningApplication) -> Bool? {
+        if app.processIdentifier == getpid() {
+            return NSApp.keyWindow?.styleMask.contains(.fullScreen) ?? NSApp.mainWindow?.styleMask.contains(.fullScreen)
+        }
+        guard AXIsProcessTrusted() else { return nil }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(element, 0.2)
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            var window: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, attribute as CFString, &window) == .success, let window,
+                  CFGetTypeID(window) == AXUIElementGetTypeID() else { continue }
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(window as! AXUIElement, "AXFullScreen" as CFString, &value) == .success
+            else { continue }
+            return (value as? Bool) ?? false
+        }
+        return nil
+    }
+}
+
 /// A borderless panel at the Dock's level that never takes the focus from the app in front.
 final class BarPanel: NSPanel {
     let barView = BarView()
@@ -438,7 +567,12 @@ final class BarPanel: NSPanel {
         hidesOnDeactivate = false
         isMovable = false
         becomesKeyOnlyIfNeeded = true
-        contentView = BarBackground(bar: barView)
+        let background = BarBackground(bar: barView)
+        contentView = background
+        barView.onBarChange = { [weak background] in
+            background?.needsLayout = true
+            background?.layoutSubtreeIfNeeded()
+        }
     }
 
     override var canBecomeKey: Bool { false }
@@ -450,6 +584,7 @@ final class BarBackground: NSView {
     private let material = NSVisualEffectView()
 
     init(bar: BarView) {
+        self.bar = bar
         super.init(frame: .zero)
         material.material = .popover
         material.blendingMode = .behindWindow
@@ -460,17 +595,36 @@ final class BarBackground: NSView {
         addSubview(bar)
     }
 
+    private let bar: BarView
+
     required init?(coder: NSCoder) { fatalError("not used") }
 
     override func layout() {
         super.layout()
-        material.frame = bounds
-        subviews.last?.frame = bounds
-        let radius = min(bounds.height * 0.3, 18)
-        material.maskImage = NSImage(size: bounds.size, flipped: false) { rect in
-            NSColor.black.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
-            return true
+        // Only the bar is drawn, as wide as magnified icons push it; the room around it stays clear.
+        material.frame = bar.drawnBarRect
+        bar.frame = bounds
+        let radius = min(bar.geometry.barHeight * 0.3, 18)
+        if radius != maskRadius {
+            maskRadius = radius
+            // Stretched, so the bar can change length at every step of a magnification.
+            let side = 2 * radius + 1
+            let mask = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+                return true
+            }
+            mask.capInsets = NSEdgeInsets(top: radius, left: radius, bottom: radius, right: radius)
+            mask.resizingMode = .stretch
+            material.maskImage = mask
         }
+    }
+
+    private var maskRadius: CGFloat = -1
+}
+
+extension NSScreen {
+    var displayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber).map { CGDirectDisplayID($0.uint32Value) }
     }
 }

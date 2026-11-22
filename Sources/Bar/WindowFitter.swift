@@ -13,13 +13,21 @@ final class WindowFitter {
 
     static var isPermitted: Bool { AXIsProcessTrusted() }
 
-    /// Height kept for the Dock above the main screen's bottom; 0 turns fitting off.
+    /// Room kept for the Dock along `edge` of `screen`; 0 turns fitting off.
     var reserved: CGFloat = 0 {
         didSet {
             guard reserved != oldValue else { return }
             reserved > 0 ? start() : stop()
             if reserved > 0 { fitAll() }
         }
+    }
+    /// The side the Dock is on.
+    var edge: ScreenEdge = .bottom {
+        didSet { if edge != oldValue, reserved > 0 { fitAll() } }
+    }
+    /// The screen the Dock is on: the main screen unless it moved to another.
+    var screen: NSScreen? = NSScreen.screens.first {
+        didSet { if screen != oldValue, reserved > 0 { fitAll() } }
     }
 
     private var observers: [pid_t: AXObserver] = [:]
@@ -148,12 +156,10 @@ final class WindowFitter {
         windows.forEach { fit($0, onlyIfFilling: true) }
     }
 
-    private var screen: NSScreen? { NSScreen.screens.first }
-
     private func target(for frame: CGRect, onlyIfFilling: Bool) -> CGRect? {
         guard reserved > 0, let screen else { return nil }
-        return WindowFit.fitted(frame, screen: screen.frame, reserved: reserved,
-                                visibleTop: screen.visibleFrame.maxY, onlyIfFilling: onlyIfFilling)
+        return WindowFit.fitted(frame, screen: screen.frame, edge: edge, reserved: reserved,
+                                visible: screen.visibleFrame, onlyIfFilling: onlyIfFilling)
     }
 
     private func fit(_ window: NSWindow, onlyIfFilling: Bool) {
@@ -184,7 +190,12 @@ final class WindowFitter {
         let key = CFHash(element)
         if let last = lastFitted[key], Date().timeIntervalSince(last) < 1 { return }
         lastFitted[key] = Date()
-        // The top stays where it is, so only the height changes.
+        // At the bottom the top stays where it is, so only the height changes; on the left the window
+        // moves right too.
+        var newOrigin = WindowFit.flipped(fitted, mainScreenHeight: height).origin
+        if newOrigin != position, let positionValue = AXValueCreate(.cgPoint, &newOrigin) {
+            AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
+        }
         var newSize = fitted.size
         if let sizeValue = AXValueCreate(.cgSize, &newSize) {
             AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)

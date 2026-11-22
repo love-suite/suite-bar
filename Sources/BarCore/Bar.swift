@@ -118,35 +118,57 @@ public struct BarPins: Equatable {
     }
 }
 
-/// Saves the pinned apps. Until the user changes them, they are the system Dock's.
+/// Saves the pinned apps. Until the user changes them, they are the system Dock's, with Explorer first,
+/// where the system Dock has Finder; Explorer can then be unpinned and moved like any app.
 public final class BarStore {
     public static let shared = BarStore()
     public static let didChange = Notification.Name("BarStoreDidChange")
     private static let key = "BarPinnedApps"
-    /// Finder never shows in our Dock, and Explorer has its own fixed place, first.
-    public static let excludedBundleIDs: Set<String> = ["com.apple.finder", "local.suite.explorer"]
+    /// Set once the saved list says itself whether Explorer is pinned: before, Explorer was always first
+    /// and never saved.
+    private static let holdsExplorerKey = "BarPinsHoldExplorer"
+    public static let explorerBundleID = "local.suite.explorer"
+    /// Finder never shows in our Dock: Explorer takes its place.
+    public static let excludedBundleIDs: Set<String> = ["com.apple.finder"]
 
     private let defaults: UserDefaults
     private let systemApps: () -> [BarApp]
+    /// Explorer itself, pinned first until the user says otherwise.
+    public let explorer: BarApp?
 
-    public init(defaults: UserDefaults = BarSettings.defaults, systemApps: @escaping () -> [BarApp] = DockReader.currentApps) {
+    public init(defaults: UserDefaults = BarSettings.defaults,
+                systemApps: @escaping () -> [BarApp] = DockReader.currentApps,
+                explorer: BarApp? = BarApp(url: Bundle.main.bundleURL, bundleID: BarStore.explorerBundleID,
+                                             name: "Explorer")) {
         self.defaults = defaults
         self.systemApps = systemApps
+        self.explorer = explorer
     }
 
     public var pins: BarPins {
         get {
+            var apps: [BarApp]
             if let data = defaults.data(forKey: Self.key),
-               let apps = try? JSONDecoder().decode([BarApp].self, from: data) {
-                return BarPins(apps)
+               let saved = try? JSONDecoder().decode([BarApp].self, from: data) {
+                apps = saved
+            } else {
+                apps = systemApps()
             }
-            return BarPins(systemApps().filter { !Self.isExcluded($0) })
+            apps = apps.filter { !Self.isExcluded($0) }
+            if let explorer, !defaults.bool(forKey: Self.holdsExplorerKey),
+               !apps.contains(where: { $0.isSameApp(as: explorer) }) {
+                apps.insert(explorer, at: 0)
+            }
+            return BarPins(apps)
         }
         set {
             defaults.set(try? JSONEncoder().encode(newValue.apps), forKey: Self.key)
+            defaults.set(true, forKey: Self.holdsExplorerKey)
             NotificationCenter.default.post(name: Self.didChange, object: self)
         }
     }
+
+    public static func isExplorer(_ app: BarApp) -> Bool { app.bundleID == explorerBundleID }
 
     public static func isExcluded(_ app: BarApp) -> Bool {
         app.bundleID.map(excludedBundleIDs.contains) ?? false
@@ -190,11 +212,10 @@ public struct BarWindow: Hashable {
 
 /// One place in the Dock, left to right.
 public enum BarTile: Hashable {
-    /// Explorer, always first, where the system Dock has Finder.
-    case explorer
     case app(BarApp, isPinned: Bool, isRunning: Bool)
     case separator
-    case downloads
+    /// A folder or file kept in the Dock (Downloads by default).
+    case item(BarItem)
     case window(BarWindow)
     case trash
 
@@ -205,22 +226,39 @@ public enum BarTile: Hashable {
 }
 
 public enum BarLayout {
-    /// Explorer, the pinned apps, a separator and the running apps that aren't pinned, then a separator,
-    /// Downloads, the minimized windows and the Trash. Finder never appears.
-    public static func tiles(pinned: [BarApp], running: [BarApp], minimized: [BarWindow] = []) -> [BarTile] {
+    /// The pinned apps (Explorer first by default), then the running apps that aren't pinned (with the
+    /// recently used ones after a separator when `recents` are shown, as the system Dock does), then a
+    /// separator, the folders and files, the minimized windows and the Trash. Finder never appears.
+    /// `explorer`, the app drawing the Dock, always counts as running.
+    public static func tiles(pinned: [BarApp], running: [BarApp], minimized: [BarWindow] = [],
+                             items: [BarItem] = [], recents: [BarApp]? = nil,
+                             explorer: BarApp? = nil) -> [BarTile] {
+        var running = running
+        if let explorer, !running.contains(where: { $0.isSameApp(as: explorer) }) {
+            running.insert(explorer, at: 0)
+        }
         let pinned = BarPins(pinned.filter { !BarStore.isExcluded($0) }).apps
         let others = BarPins(running.filter { app in
             !BarStore.isExcluded(app) && !pinned.contains { $0.isSameApp(as: app) }
         }).apps
-        var tiles: [BarTile] = [.explorer]
-        tiles += pinned.map { app in
+        var tiles: [BarTile] = pinned.map { app in
             .app(app, isPinned: true, isRunning: running.contains { $0.isSameApp(as: app) })
         }
-        if !others.isEmpty {
-            tiles.append(.separator)
+        if let recents {
+            let quit = BarPins(recents.filter { app in
+                !BarStore.isExcluded(app) && !pinned.contains { $0.isSameApp(as: app) }
+                    && !others.contains { $0.isSameApp(as: app) }
+            }).apps
+            if !others.isEmpty || !quit.isEmpty {
+                tiles.append(.separator)
+                tiles += others.map { .app($0, isPinned: false, isRunning: true) }
+                tiles += quit.map { .app($0, isPinned: false, isRunning: false) }
+            }
+        } else {
             tiles += others.map { .app($0, isPinned: false, isRunning: true) }
         }
-        tiles += [.separator, .downloads]
+        tiles.append(.separator)
+        tiles += items.map { .item($0) }
         tiles += minimized.map { .window($0) }
         tiles.append(.trash)
         return tiles
@@ -247,13 +285,39 @@ public struct BarGeometry: Equatable {
     public var dotArea: CGFloat { max(6, (iconSize * 0.16).rounded()) }
     public var barHeight: CGFloat { iconSize + dotArea + 2 * tilePadding }
 
-    public func frames(for tiles: [BarTile]) -> [CGRect] {
+    public func frames(for tiles: [BarTile], magnification: BarMagnification? = nil) -> [CGRect] {
         var x = margin
-        return tiles.map { tile in
+        let rest = tiles.map { tile in
             let width = tile == .separator ? separatorWidth : tileWidth
             defer { x += width }
             return CGRect(x: x, y: 0, width: width, height: barHeight)
         }
+        guard let magnification, magnification.amount > 0, magnification.size > iconSize else { return rest }
+        return magnified(rest, tiles: tiles, by: magnification)
+    }
+
+    /// Tiles near the pointer grow, the nearest most, pushing the others aside; the point under the
+    /// pointer stays under it, as in the system Dock.
+    private func magnified(_ rest: [CGRect], tiles: [BarTile], by magnification: BarMagnification) -> [CGRect] {
+        let reach = BarMagnification.reach * tileWidth
+        let growth = (magnification.size / iconSize - 1) * magnification.amount
+        let scales = rest.map { frame -> CGFloat in
+            let distance = abs(frame.midX - magnification.pointer) / reach
+            return distance < 1 ? 1 + growth * (cos(distance * .pi) + 1) / 2 : 1
+        }
+        var x = margin
+        var frames = zip(rest, scales).map { frame, scale -> CGRect in
+            defer { x += frame.width * scale }
+            return CGRect(x: x, y: 0, width: frame.width * scale, height: barHeight + iconSize * (scale - 1))
+        }
+        // The tile under the pointer (or the nearest end) keeps the pointer at the same place in it.
+        let pointer = magnification.pointer
+        let anchor = rest.lastIndex { $0.minX <= pointer } ?? 0
+        let fraction = min(max((pointer - rest[anchor].minX) / rest[anchor].width, 0), 1)
+        let shift = (rest[anchor].minX + fraction * rest[anchor].width)
+            - (frames[anchor].minX + fraction * frames[anchor].width)
+        for index in frames.indices { frames[index].origin.x += shift }
+        return frames
     }
 
     public func barSize(for tiles: [BarTile]) -> CGSize {
@@ -261,9 +325,16 @@ public struct BarGeometry: Equatable {
         return CGSize(width: last + margin, height: barHeight)
     }
 
-    /// The icon's square inside its tile.
+    /// How far magnified icons can push the bar's ends out, on either side.
+    public func magnificationReach(size: CGFloat) -> CGFloat {
+        guard size > iconSize else { return 0 }
+        return ((size / iconSize - 1) * BarMagnification.reach * tileWidth).rounded(.up)
+    }
+
+    /// The icon's square inside its tile, magnified with it.
     public func iconFrame(in tile: CGRect) -> CGRect {
-        CGRect(x: tile.midX - iconSize / 2, y: dotArea + tilePadding, width: iconSize, height: iconSize)
+        let side = tile.width * iconSize / tileWidth
+        return CGRect(x: tile.midX - side / 2, y: dotArea + tilePadding, width: side, height: side)
     }
 
     /// The tile under `point`, separators excluded.
@@ -276,6 +347,25 @@ public struct BarGeometry: Equatable {
     /// `pinnedFrames` are the pinned tiles' frames, in order.
     public static func insertionIndex(forX x: CGFloat, pinnedFrames: [CGRect]) -> Int {
         pinnedFrames.filter { $0.midX < x }.count
+    }
+}
+
+/// Icons growing under the pointer.
+public struct BarMagnification: Equatable {
+    /// The size the icon right under the pointer reaches.
+    public var size: CGFloat
+    /// The pointer along the bar, in the bar's coordinates.
+    public var pointer: CGFloat
+    /// From 0 (at rest) to 1 (fully grown), for growing and shrinking smoothly.
+    public var amount: CGFloat
+
+    /// How many tiles away from the pointer icons still grow.
+    public static let reach: CGFloat = 3
+
+    public init(size: CGFloat, pointer: CGFloat, amount: CGFloat = 1) {
+        self.size = size
+        self.pointer = pointer
+        self.amount = min(max(amount, 0), 1)
     }
 }
 
@@ -293,16 +383,43 @@ public enum WindowFit {
     /// down on purpose stays put.
     public static func fitted(_ window: CGRect, screen: CGRect, reserved: CGFloat, visibleTop: CGFloat,
                               onlyIfFilling: Bool = false, minimumHeight: CGFloat = 120) -> CGRect? {
-        let limit = screen.minY + reserved
-        guard reserved > 0,
-              screen.contains(CGPoint(x: window.midX, y: min(max(window.midY, screen.minY), screen.maxY - 1))),
-              window.minY < limit - 0.5,
-              // A window pushed below the screen's edge was moved there by the user.
-              window.minY >= screen.minY - 1,
-              window.maxY - limit >= minimumHeight
-        else { return nil }
-        if onlyIfFilling, window.maxY < visibleTop - 2 { return nil }
-        return CGRect(x: window.minX, y: limit, width: window.width, height: window.maxY - limit)
+        fitted(window, screen: screen, edge: .bottom, reserved: reserved, visible: CGRect(
+            x: screen.minX, y: screen.minY, width: screen.width, height: visibleTop - screen.minY),
+               onlyIfFilling: onlyIfFilling, minimumLength: minimumHeight)
+    }
+
+    /// The same for a Dock on any side: a window reaching into the Dock's strip along `edge` ends before
+    /// it. `visible` is the screen's usable area, by which a maximized window is told: one filling it
+    /// across the Dock's strip.
+    public static func fitted(_ window: CGRect, screen: CGRect, edge: ScreenEdge, reserved: CGFloat,
+                              visible: CGRect, onlyIfFilling: Bool = false,
+                              minimumLength: CGFloat = 120) -> CGRect? {
+        // On this screen (at the bottom, a window may reach below it).
+        let middle = edge == .bottom
+            ? CGPoint(x: window.midX, y: min(max(window.midY, screen.minY), screen.maxY - 1))
+            : CGPoint(x: window.midX, y: window.midY)
+        guard reserved > 0, screen.contains(middle) else { return nil }
+        switch edge {
+        case .bottom:
+            let limit = screen.minY + reserved
+            // A window pushed past the screen's edge was moved there by the user.
+            guard window.minY < limit - 0.5, window.minY >= screen.minY - 1, window.maxY - limit >= minimumLength
+            else { return nil }
+            if onlyIfFilling, window.maxY < visible.maxY - 2 { return nil }
+            return CGRect(x: window.minX, y: limit, width: window.width, height: window.maxY - limit)
+        case .left:
+            let limit = screen.minX + reserved
+            guard window.minX < limit - 0.5, window.minX >= screen.minX - 1, window.maxX - limit >= minimumLength
+            else { return nil }
+            if onlyIfFilling, window.maxX < visible.maxX - 2 { return nil }
+            return CGRect(x: limit, y: window.minY, width: window.maxX - limit, height: window.height)
+        case .right:
+            let limit = screen.maxX - reserved
+            guard window.maxX > limit + 0.5, window.maxX <= screen.maxX + 1, limit - window.minX >= minimumLength
+            else { return nil }
+            if onlyIfFilling, window.minX > visible.minX + 2 { return nil }
+            return CGRect(x: window.minX, y: window.minY, width: limit - window.minX, height: window.height)
+        }
     }
 
     /// Converts between Accessibility's coordinates (origin top left of the main screen) and AppKit's.

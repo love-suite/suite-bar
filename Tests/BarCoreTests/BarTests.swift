@@ -160,62 +160,110 @@ private func freshDefaults() -> UserDefaults {
 }
 
 @Suite struct BarStoreTests {
-    @Test func startsFromTheSystemDockWithoutFinderOrExplorer() {
-        let store = BarStore(defaults: freshDefaults(), systemApps: { [explorer, finder, mail, safari] })
-        #expect(store.pins.apps == [mail, safari])
+    @Test func startsFromTheSystemDockWithExplorerFirstAndNoFinder() {
+        let store = BarStore(defaults: freshDefaults(), systemApps: { [finder, mail, explorer, safari] },
+                              explorer: explorer)
+        #expect(store.pins.apps == [mail, explorer, safari])
+        let fresh = BarStore(defaults: freshDefaults(), systemApps: { [finder, mail] }, explorer: explorer)
+        #expect(fresh.pins.apps == [explorer, mail])
     }
 
     @Test func changesAreSavedAndOutliveTheSystemDock() {
         let defaults = freshDefaults()
         var system = [mail, safari]
-        let store = BarStore(defaults: defaults, systemApps: { system })
+        let store = BarStore(defaults: defaults, systemApps: { system }, explorer: nil)
         store.move(from: 1, to: 0)
         store.pin(notes)
         store.unpin(mail)
         system = []
         #expect(store.pins.apps == [safari, notes])
-        let reopened = BarStore(defaults: defaults, systemApps: { [] })
+        let reopened = BarStore(defaults: defaults, systemApps: { [] }, explorer: nil)
         #expect(reopened.pins.apps == [safari, notes])
         #expect(reopened.isPinned(notes))
     }
 
-    @Test func finderAndExplorerCantBePinned() {
-        let store = BarStore(defaults: freshDefaults(), systemApps: { [] })
+    @Test func pinsSavedBeforeExplorerCouldMoveGetItFirst() throws {
+        let defaults = freshDefaults()
+        defaults.set(try JSONEncoder().encode([mail, safari]), forKey: "BarPinnedApps")
+        let store = BarStore(defaults: defaults, systemApps: { [] }, explorer: explorer)
+        #expect(store.pins.apps == [explorer, mail, safari])
+    }
+
+    @Test func explorerCanBeUnpinnedAndMoved() {
+        let defaults = freshDefaults()
+        let store = BarStore(defaults: defaults, systemApps: { [mail, safari] }, explorer: explorer)
+        store.move(from: 0, to: 3)
+        #expect(store.pins.apps == [mail, safari, explorer])
+        store.unpin(explorer)
+        #expect(store.pins.apps == [mail, safari])
+        #expect(BarStore(defaults: defaults, systemApps: { [] }, explorer: explorer).pins.apps == [mail, safari])
+        store.pin(explorer, at: 1)
+        #expect(store.pins.apps == [mail, explorer, safari])
+    }
+
+    @Test func finderCantBePinned() {
+        let store = BarStore(defaults: freshDefaults(), systemApps: { [] }, explorer: nil)
         store.pin(finder)
-        store.pin(explorer)
         #expect(store.pins.apps.isEmpty)
     }
 
     @Test func emptyingTheDockIsKept() {
         let defaults = freshDefaults()
-        let store = BarStore(defaults: defaults, systemApps: { [mail] })
+        let store = BarStore(defaults: defaults, systemApps: { [mail] }, explorer: explorer)
         store.unpin(mail)
-        #expect(BarStore(defaults: defaults, systemApps: { [mail] }).pins.apps.isEmpty)
+        store.unpin(explorer)
+        #expect(BarStore(defaults: defaults, systemApps: { [mail] }, explorer: explorer).pins.apps.isEmpty)
     }
 }
 
 @Suite struct BarLayoutTests {
-    @Test func explorerFirstThenPinnedThenRunningThenStacks() {
-        let tiles = BarLayout.tiles(pinned: [mail, safari], running: [safari, notes, finder])
+    let downloads = BarItem.downloads(URL(fileURLWithPath: "/Users/me/Downloads"))
+
+    @Test func pinnedThenRunningThenStacks() {
+        let tiles = BarLayout.tiles(pinned: [explorer, mail, safari], running: [safari, notes, finder],
+                                     items: [downloads], recents: [], explorer: explorer)
         #expect(tiles == [
-            .explorer,
+            .app(explorer, isPinned: true, isRunning: true),
             .app(mail, isPinned: true, isRunning: false),
             .app(safari, isPinned: true, isRunning: true),
             .separator,
             .app(notes, isPinned: false, isRunning: true),
-            .separator, .downloads, .trash,
+            .separator, .item(downloads), .trash,
         ])
     }
 
+    @Test func withoutRecentsRunningAppsFollowThePinnedOnes() {
+        let tiles = BarLayout.tiles(pinned: [mail], running: [notes], items: [downloads])
+        #expect(tiles == [.app(mail, isPinned: true, isRunning: false),
+                          .app(notes, isPinned: false, isRunning: true), .separator, .item(downloads), .trash])
+    }
+
+    @Test func recentAppsComeAfterTheRunningOnesOnce() {
+        let tiles = BarLayout.tiles(pinned: [mail], running: [notes], recents: [notes, safari, mail])
+        #expect(tiles == [.app(mail, isPinned: true, isRunning: false), .separator,
+                          .app(notes, isPinned: false, isRunning: true),
+                          .app(safari, isPinned: false, isRunning: false), .separator, .trash])
+    }
+
     @Test func noRunningSectionWhenEverythingIsPinned() {
-        let tiles = BarLayout.tiles(pinned: [mail], running: [mail, explorer, finder])
-        #expect(tiles == [.explorer, .app(mail, isPinned: true, isRunning: true), .separator, .downloads, .trash])
+        let tiles = BarLayout.tiles(pinned: [explorer, mail], running: [mail, finder], items: [downloads],
+                                     recents: [], explorer: explorer)
+        #expect(tiles == [.app(explorer, isPinned: true, isRunning: true), .app(mail, isPinned: true, isRunning: true),
+                          .separator, .item(downloads), .trash])
+    }
+
+    @Test func unpinnedExplorerShowsFirstAmongTheRunningApps() {
+        let tiles = BarLayout.tiles(pinned: [mail], running: [notes], recents: [safari], explorer: explorer)
+        #expect(tiles == [.app(mail, isPinned: true, isRunning: false), .separator,
+                          .app(explorer, isPinned: false, isRunning: true),
+                          .app(notes, isPinned: false, isRunning: true),
+                          .app(safari, isPinned: false, isRunning: false), .separator, .trash])
     }
 
     @Test func minimizedWindowsComeBeforeTheTrash() {
         let window = BarWindow(id: 1, title: "Inbox", app: mail)
-        let tiles = BarLayout.tiles(pinned: [mail], running: [mail], minimized: [window])
-        #expect(Array(tiles.suffix(3)) == [.downloads, .window(window), .trash])
+        let tiles = BarLayout.tiles(pinned: [mail], running: [mail], minimized: [window], items: [downloads])
+        #expect(Array(tiles.suffix(3)) == [.item(downloads), .window(window), .trash])
     }
 
     @Test func finderNeverShowsEvenIfPinned() {
@@ -232,7 +280,7 @@ private func freshDefaults() -> UserDefaults {
 
     @Test func tilesSitSideBySideWithNarrowSeparators() {
         let geometry = BarGeometry(iconSize: 48)
-        let tiles: [BarTile] = [.explorer, .app(mail, isPinned: true, isRunning: false), .separator, .trash]
+        let tiles: [BarTile] = [.app(explorer, isPinned: true, isRunning: true), .app(mail, isPinned: true, isRunning: false), .separator, .trash]
         let frames = geometry.frames(for: tiles)
         #expect(frames[0].minX == geometry.margin)
         #expect(frames[1].minX == frames[0].maxX)
@@ -245,7 +293,7 @@ private func freshDefaults() -> UserDefaults {
 
     @Test func hitTestingSkipsSeparators() {
         let geometry = BarGeometry(iconSize: 48)
-        let tiles: [BarTile] = [.explorer, .separator, .trash]
+        let tiles: [BarTile] = [.app(explorer, isPinned: true, isRunning: true), .separator, .trash]
         let frames = geometry.frames(for: tiles)
         #expect(geometry.tileIndex(at: CGPoint(x: frames[0].midX, y: 10), tiles: tiles) == 0)
         #expect(geometry.tileIndex(at: CGPoint(x: frames[1].midX, y: 10), tiles: tiles) == nil)
@@ -276,6 +324,128 @@ private func freshDefaults() -> UserDefaults {
         #expect(options.isShown)
         #expect(options.iconSize == 56)
         #expect(!options.autohides)
+    }
+
+    @Test func optionsSavedBeforeTheNewerKeysTakeTheSystemDocksValues() throws {
+        var system = BarSettings()
+        system.showsIndicators = false
+        system.minimizesIntoApp = true
+        let decoder = JSONDecoder()
+        decoder.userInfo[BarSettings.fallbackKey] = system
+        let options = try decoder.decode(BarSettings.self, from: Data(#"{"isShown":true,"iconSize":56}"#.utf8))
+        #expect(options.isShown)
+        #expect(!options.showsIndicators)
+        #expect(options.minimizesIntoApp)
+        #expect(options.animatesLaunch)
+    }
+
+    @Test func theSystemDocksOptionsAreRead() {
+        let dock: [String: Any] = ["show-process-indicators": false, "minimize-to-application": true,
+                                   "launchanim": false, "show-recents": false]
+        let options = BarSettings { dock[$0] }
+        #expect(!options.showsIndicators)
+        #expect(options.minimizesIntoApp)
+        #expect(!options.animatesLaunch)
+        #expect(!options.showsRecents)
+        let defaults = BarSettings { _ in nil }
+        #expect(defaults.showsIndicators && !defaults.minimizesIntoApp && defaults.animatesLaunch
+                && defaults.showsRecents)
+    }
+}
+
+@Suite struct BarItemTests {
+    /// The system Dock's Downloads, shown as a folder that opens in a fan, sorted by date added.
+    let others: [Any] = [
+        ["tile-type": "directory-tile",
+         "tile-data": ["arrangement": 2, "displayas": 1, "showas": 1, "file-type": 2, "file-label": "Téléchargements",
+                       "file-data": ["_CFURLString": "file:///Users/me/Downloads/", "_CFURLStringType": 15]]
+                    as [String: Any]],
+        ["tile-type": "file-tile",
+         "tile-data": ["file-data": ["_CFURLString": "file:///Users/me/Notes.txt"]] as [String: Any]],
+        ["tile-type": "recents-tile", "tile-data": [:] as [String: Any]],
+    ]
+
+    @Test func readsFoldersAndFilesWithTheirOptions() {
+        let items = DockReader.others(fromPersistentOthers: others)
+        #expect(items.count == 2)
+        #expect(items[0] == BarItem(path: "/Users/me/Downloads", name: "Téléchargements", isFolder: true,
+                                     sort: .dateAdded, display: .folder, view: .fan))
+        #expect(items[1].name == "Notes.txt")
+        #expect(!items[1].isFolder)
+        #expect(items[1].view == .automatic)
+    }
+
+    @Test func storeStartsFromTheSystemDockOrDownloads() {
+        let system = DockReader.others(fromPersistentOthers: others)
+        #expect(BarItemStore(defaults: freshDefaults(), systemItems: { system }).items == system)
+        let downloads = URL(fileURLWithPath: "/Users/me/Downloads")
+        let store = BarItemStore(defaults: freshDefaults(), systemItems: { nil }, downloads: downloads)
+        #expect(store.items == [.downloads(downloads)])
+    }
+
+    @Test func addingRemovingAndChangingAreSaved() {
+        let defaults = freshDefaults()
+        let store = BarItemStore(defaults: defaults, systemItems: { [] })
+        let projects = BarItem(path: "/Users/me/Projects", isFolder: true)
+        let notes = BarItem(path: "/Users/me/Notes.txt", isFolder: false)
+        store.add(projects)
+        store.add(notes, at: 0)
+        store.add(projects, at: 0)
+        #expect(store.items.map(\.name) == ["Projects", "Notes.txt"])
+        var changed = projects
+        changed.view = .list
+        store.update(changed)
+        store.remove(notes)
+        #expect(BarItemStore(defaults: defaults, systemItems: { nil }).items == [changed])
+    }
+
+    @Test func automaticIsAFanWhenEverythingFits() {
+        #expect(BarStackView.automatic.resolved(itemCount: 8, fanCapacity: 12) == .fan)
+        #expect(BarStackView.automatic.resolved(itemCount: 20, fanCapacity: 12) == .grid)
+        #expect(BarStackView.list.resolved(itemCount: 2, fanCapacity: 12) == .list)
+    }
+
+    @Test func eachSortHasItsOrder() {
+        let day: TimeInterval = 86_400
+        let base = Date(timeIntervalSince1970: 1_000_000)
+        let a = BarStackEntry(url: URL(fileURLWithPath: "/d/b.zip"), added: base, modified: base + 2 * day,
+                               created: base - day, kind: "ZIP archive")
+        let b = BarStackEntry(url: URL(fileURLWithPath: "/d/a.pdf"), added: base + day, modified: base,
+                               created: base, kind: "PDF document")
+        let c = BarStackEntry(url: URL(fileURLWithPath: "/d/c.pdf"), added: nil, modified: base + day,
+                               created: nil, kind: "PDF document")
+        func names(_ sort: BarStackSort) -> [String] {
+            BarStackOrder.sorted([a, b, c], by: sort).map(\.lastPathComponent)
+        }
+        #expect(names(.name) == ["a.pdf", "b.zip", "c.pdf"])
+        #expect(names(.dateAdded) == ["a.pdf", "b.zip", "c.pdf"])
+        #expect(names(.dateModified) == ["b.zip", "c.pdf", "a.pdf"])
+        #expect(names(.dateCreated) == ["a.pdf", "b.zip", "c.pdf"])
+        #expect(names(.kind) == ["a.pdf", "c.pdf", "b.zip"])
+    }
+
+    @Test func recentsKeepTheLatestThreeOnce() {
+        var recents = BarRecents()
+        for app in [mail, safari, notes, mail, finder] { recents.used(app) }
+        #expect(recents.apps == [mail, notes, safari])
+        recents.used(explorer)
+        recents.forget(notes)
+        #expect(recents.apps == [mail, safari])
+    }
+
+    @Test func theFanRisesAndBendsRight() {
+        let places = BarFan.places(count: 10, step: 50)
+        #expect(places.count == 10)
+        #expect(places[0].center.y == 25)
+        for (lower, upper) in zip(places, places.dropFirst()) {
+            #expect(upper.center.y == lower.center.y + 50)
+            #expect(upper.center.x > lower.center.x)
+            #expect(upper.angle > lower.angle)
+        }
+        #expect(places.last!.center.x <= 60)
+        #expect(BarFan.capacity(height: 600, step: 50) == 11)
+        #expect(BarFan.capacity(height: 2000, step: 50) == 15)
+        #expect(BarFan.capacity(height: 30, step: 50) == 1)
     }
 }
 
@@ -526,5 +696,85 @@ private final class FakeDock: PreferenceDomain {
         #expect(!requests.offersForceQuit(43))
         requests.keep(running: [43])
         #expect(!requests.offersForceQuit(42))
+    }
+}
+
+@Suite struct BarMagnificationTests {
+    let geometry = BarGeometry(iconSize: 48)
+    let tiles: [BarTile] = [.app(explorer, isPinned: true, isRunning: true)] + (0..<9).map { _ in BarTile.trash }
+
+    @Test func atRestNothingChanges() {
+        let rest = geometry.frames(for: tiles)
+        #expect(geometry.frames(for: tiles, magnification: BarMagnification(size: 96, pointer: 100, amount: 0)) == rest)
+        #expect(geometry.frames(for: tiles, magnification: BarMagnification(size: 48, pointer: 100)) == rest)
+    }
+
+    @Test func theIconUnderThePointerGrowsMostAndStaysUnderIt() {
+        let rest = geometry.frames(for: tiles)
+        let pointer = rest[5].midX
+        let frames = geometry.frames(for: tiles, magnification: BarMagnification(size: 96, pointer: pointer))
+        let sides = frames.map { geometry.iconFrame(in: $0).width }
+        #expect(abs(sides[5] - 96) < 0.01)
+        #expect(sides[4] < sides[5] && sides[6] < sides[5] && sides[4] > 48)
+        #expect(abs(sides[0] - 48) < 0.01 && abs(sides[9] - 48) < 0.01)
+        #expect(abs(frames[5].midX - pointer) < 0.01)
+        // Tiles stay side by side, and the outer ones are pushed out no further than the reach.
+        for index in 1..<frames.count { #expect(abs(frames[index].minX - frames[index - 1].maxX) < 0.01) }
+        let reach = geometry.magnificationReach(size: 96)
+        #expect(frames[0].minX >= rest[0].minX - reach && frames[9].maxX <= rest[9].maxX + reach)
+        #expect(frames[0].minX < rest[0].minX && frames[9].maxX > rest[9].maxX)
+    }
+
+    @Test func magnifiedIconsRiseFromTheBar() {
+        let rest = geometry.frames(for: tiles)
+        let frames = geometry.frames(for: tiles, magnification: BarMagnification(size: 96, pointer: rest[2].midX))
+        #expect(geometry.iconFrame(in: frames[2]).minY == geometry.iconFrame(in: rest[2]).minY)
+        #expect(frames[2].height == geometry.barHeight + 48)
+    }
+
+    @Test func windowsEndBeforeADockOnTheSide() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 875)
+        let window = CGRect(x: 0, y: 0, width: 1440, height: 875)
+        #expect(WindowFit.fitted(window, screen: screen, edge: .left, reserved: 70, visible: visible)
+                == CGRect(x: 70, y: 0, width: 1370, height: 875))
+        #expect(WindowFit.fitted(window, screen: screen, edge: .right, reserved: 70, visible: visible)
+                == CGRect(x: 0, y: 0, width: 1370, height: 875))
+        let narrow = CGRect(x: 0, y: 100, width: 600, height: 500)
+        #expect(WindowFit.fitted(narrow, screen: screen, edge: .left, reserved: 70, visible: visible,
+                                 onlyIfFilling: true) == nil)
+        #expect(WindowFit.fitted(narrow, screen: screen, edge: .left, reserved: 70, visible: visible) != nil)
+        #expect(WindowFit.fitted(narrow, screen: screen, edge: .right, reserved: 70, visible: visible) == nil)
+        let elsewhere = CGRect(x: 1500, y: 0, width: 800, height: 600)
+        #expect(WindowFit.fitted(elsewhere, screen: screen, edge: .left, reserved: 70, visible: visible) == nil)
+    }
+}
+
+@Suite struct BarPlacementOptionsTests {
+    @Test func magnificationAndSideComeFromTheSystemDock() {
+        let dock: [String: Any] = ["magnification": true, "largesize": 200, "orientation": "left"]
+        let options = BarSettings { dock[$0] }
+        #expect(options.magnifies)
+        #expect(options.magnifiedSize == BarSettings.magnifiedSizes.upperBound)
+        #expect(options.position == .left)
+        var small = BarSettings()
+        small.iconSize = 64
+        small.magnifiedSize = 40
+        #expect(small.magnifiedIconSize == 64)
+    }
+
+    @Test func olderSavesKeepTheirPlace() throws {
+        var system = BarSettings()
+        system.position = .right
+        let decoder = JSONDecoder()
+        decoder.userInfo[BarSettings.fallbackKey] = system
+        let options = try decoder.decode(BarSettings.self, from: Data(#"{"isShown":true}"#.utf8))
+        #expect(options.position == .right && options.display == .withPointer && !options.magnifies)
+        var saved = BarSettings()
+        saved.position = .left
+        saved.magnifies = true
+        saved.display = .main
+        let again = try JSONDecoder().decode(BarSettings.self, from: JSONEncoder().encode(saved))
+        #expect(again == saved)
     }
 }
