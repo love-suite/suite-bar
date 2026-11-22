@@ -111,6 +111,16 @@
         }
       }
     },
+    "Open Launcher": {
+      "localizations": {
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir Launcher"
+          }
+        }
+      }
+    },
     "Open in Explorer": {
       "localizations": {
         "fr": {

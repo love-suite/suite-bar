@@ -26,10 +26,12 @@ public struct BarSettings: Codable, Equatable {
     /// Bundle identifiers of the apps with which the Dock stays on screen, though by default it hides.
     public var stayingApps: [String] = []
     public var fullScreen: BarFullScreenMode = .hides
+    /// A Launcher tile just after Explorer's.
+    public var showsLauncher = false
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case isShown, iconSize, autohides, hidingApps, stayingApps, fullScreen }
+    private enum CodingKeys: String, CodingKey { case isShown, iconSize, autohides, hidingApps, stayingApps, fullScreen, showsLauncher }
 
     /// Options saved by an older version, without the newer keys, keep what they had.
     public init(from decoder: Decoder) throws {
@@ -40,6 +42,7 @@ public struct BarSettings: Codable, Equatable {
         hidingApps = try values.decodeIfPresent([String].self, forKey: .hidingApps) ?? []
         stayingApps = try values.decodeIfPresent([String].self, forKey: .stayingApps) ?? []
         fullScreen = (try? values.decodeIfPresent(BarFullScreenMode.self, forKey: .fullScreen)) ?? .hides
+        showsLauncher = try values.decodeIfPresent(Bool.self, forKey: .showsLauncher) ?? false
     }
 
     /// The apps that make an exception to the default: those with which the Dock stays while it hides by

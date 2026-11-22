@@ -102,6 +102,7 @@ final class BarController {
             }
             setWatchingPointer(true)
             panel?.barView.geometry = options.geometry
+            panel?.barView.showsLauncher = options.showsLauncher
             updateHiding()
             place()
             MinimizedWindows.shared.isEnabled = true

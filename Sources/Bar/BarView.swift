@@ -11,6 +11,9 @@ final class BarView: NSView {
     var geometry = BarSettings().geometry {
         didSet { if geometry != oldValue { icons.removeAll(); reload() } }
     }
+    var showsLauncher = false {
+        didSet { if showsLauncher != oldValue { reload() } }
+    }
     /// Called when the bar changes width, so the panel can follow.
     var onSizeChange: (() -> Void)?
     var barSize: NSSize { geometry.barSize(for: tiles) }
@@ -97,7 +100,7 @@ final class BarView: NSView {
         }
         let old = barSize
         tiles = BarLayout.tiles(pinned: store.pins.apps, running: runningApps,
-                                 minimized: MinimizedWindows.shared.windows)
+                                minimized: MinimizedWindows.shared.windows, showsLauncher: showsLauncher)
         needsDisplay = true
         if barSize != old { onSizeChange?() }
     }
@@ -126,6 +129,8 @@ final class BarView: NSView {
         switch tile {
         case .explorer:
             return NSApp.applicationIconImage
+        case .launcher:
+            return NSImage(systemSymbolName: "square.grid.3x3.fill", accessibilityDescription: nil)
         case .app(let app, _, _):
             if let cached = icons[key(app)] { return cached }
             let image = running[key(app)]?.icon
@@ -171,6 +176,7 @@ final class BarView: NSView {
     private func name(of tile: BarTile) -> String {
         switch tile {
         case .explorer: return "Explorer"
+        case .launcher: return "Launcher"
         case .app(let app, _, _): return running[key(app)]?.localizedName ?? app.name
         case .downloads: return NSLocalizedString("Downloads", comment: "")
         case .window(let window): return window.title
@@ -243,6 +249,7 @@ final class BarView: NSView {
     private func isRunning(_ tile: BarTile) -> Bool {
         switch tile {
         case .explorer: return true
+        case .launcher: return LauncherApp.isRunning
         case .app(_, _, let isRunning): return isRunning
         default: return false
         }
@@ -340,6 +347,8 @@ final class BarView: NSView {
         case .explorer:
             ExplorerLink.activate()
             NSApp.activate(ignoringOtherApps: true)
+        case .launcher:
+            LauncherApp.open()
         case .app(let app, let isPinned, _):
             guard let url = location(of: app) else {
                 askToRemoveMissing(app, isPinned: isPinned)
@@ -398,6 +407,10 @@ final class BarView: NSView {
             menu.addItem(BarMenuItem(title: title, action: action))
         }
         switch tile {
+        case .launcher?:
+            add(NSLocalizedString("Open Launcher", comment: "")) { LauncherApp.open() }
+            menu.addItem(.separator())
+            add(NSLocalizedString("Bar Settings", comment: "")) { SuiteSettingsApp.show(tab: "Bar") }
         case .explorer:
             add(NSLocalizedString("New Explorer Window", comment: "")) {
                 ExplorerLink.open([FileManager.default.homeDirectoryForCurrentUser])
@@ -507,6 +520,8 @@ final class BarView: NSView {
         switch tiles[index] {
         case .explorer:
             ExplorerLink.open(urls)
+        case .launcher:
+            return false
         case .app(let app, _, _):
             guard let appURL = location(of: app) else { return false }
             NSWorkspace.shared.open(urls, withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration())
@@ -530,6 +545,8 @@ final class BarView: NSView {
         switch tiles[index] {
         case .explorer:
             return (index, .generic)
+        case .launcher:
+            return (nil, [])
         case .app(let app, _, _):
             guard let appURL = location(of: app), canOpen(urls, with: appURL) else { return (nil, []) }
             return (index, .generic)

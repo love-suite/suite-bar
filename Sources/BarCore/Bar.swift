@@ -192,6 +192,8 @@ public struct BarWindow: Hashable {
 public enum BarTile: Hashable {
     /// Explorer, always first, where the system Dock has Finder.
     case explorer
+    /// Launcher, the Launchpad replacement, shown when turned on in Bar's settings.
+    case launcher
     case app(BarApp, isPinned: Bool, isRunning: Bool)
     case separator
     case downloads
@@ -207,12 +209,14 @@ public enum BarTile: Hashable {
 public enum BarLayout {
     /// Explorer, the pinned apps, a separator and the running apps that aren't pinned, then a separator,
     /// Downloads, the minimized windows and the Trash. Finder never appears.
-    public static func tiles(pinned: [BarApp], running: [BarApp], minimized: [BarWindow] = []) -> [BarTile] {
+    public static func tiles(pinned: [BarApp], running: [BarApp], minimized: [BarWindow] = [],
+                             showsLauncher: Bool = false) -> [BarTile] {
         let pinned = BarPins(pinned.filter { !BarStore.isExcluded($0) }).apps
         let others = BarPins(running.filter { app in
             !BarStore.isExcluded(app) && !pinned.contains { $0.isSameApp(as: app) }
         }).apps
         var tiles: [BarTile] = [.explorer]
+        if showsLauncher { tiles.append(.launcher) }
         tiles += pinned.map { app in
             .app(app, isPinned: true, isRunning: running.contains { $0.isSameApp(as: app) })
         }

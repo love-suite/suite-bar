@@ -528,3 +528,12 @@ private final class FakeDock: PreferenceDomain {
         #expect(!requests.offersForceQuit(42))
     }
 }
+
+@Suite struct LauncherTileTests {
+    @Test func theLauncherTileFollowsExplorersWhenShown() {
+        let app = BarApp(url: URL(fileURLWithPath: "/Applications/Safari.app"), bundleID: "com.apple.Safari")
+        #expect(!BarLayout.tiles(pinned: [app], running: []).contains(.launcher))
+        let tiles = BarLayout.tiles(pinned: [app], running: [], showsLauncher: true)
+        #expect(Array(tiles.prefix(2)) == [.explorer, .launcher])
+    }
+}
